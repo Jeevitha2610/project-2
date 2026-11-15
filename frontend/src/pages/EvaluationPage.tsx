@@ -45,17 +45,17 @@ export const EvaluationPage: FC = () => {
         <div className="bg-[#111425] border border-[#1e233d] rounded-2xl p-6 shadow-xl text-center">
           <span className="text-xs font-semibold text-slate-400">Speaker Similarity</span>
           <div className="text-3xl font-extrabold text-purple-400 mt-2 font-mono">
-            {latest ? `${(latest.speaker_similarity * 100).toFixed(1)}%` : '98.5%'}
+            {latest ? `${(latest.speaker_similarity * 100).toFixed(1)}%` : '--'}
           </div>
-          <p className="text-[11px] text-slate-500 mt-1">Acoustic embedding cosine sim</p>
+          <p className="text-[11px] text-slate-500 mt-1">ECAPA-TDNN cosine sim</p>
         </div>
 
         <div className="bg-[#111425] border border-[#1e233d] rounded-2xl p-6 shadow-xl text-center">
-          <span className="text-xs font-semibold text-slate-400">Audio Duration</span>
+          <span className="text-xs font-semibold text-slate-400">Real-Time Factor (RTF)</span>
           <div className="text-3xl font-extrabold text-blue-400 mt-2 font-mono">
-            {latest ? `${latest.duration_seconds.toFixed(1)}s` : '6.0s'}
+            {latest ? `${(latest.rtf || (latest.duration_seconds > 0 ? latest.inference_time_seconds / latest.duration_seconds : 0)).toFixed(2)}x` : '--'}
           </div>
-          <p className="text-[11px] text-slate-500 mt-1">Generated utterance length</p>
+          <p className="text-[11px] text-slate-500 mt-1">Inference / Duration ratio</p>
         </div>
       </div>
 
