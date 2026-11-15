@@ -19,4 +19,5 @@ def get_db():
         db.close()
 
 def init_db():
+    from backend.app.database import models  # noqa: F401
     Base.metadata.create_all(bind=engine)
