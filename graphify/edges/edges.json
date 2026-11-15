@@ -1,0 +1,35 @@
+[
+  {"source": "ui_studio_page", "target": "frontend_api_client", "type": "USES"},
+  {"source": "ui_profiles_page", "target": "frontend_api_client", "type": "USES"},
+  {"source": "ui_models_page", "target": "frontend_api_client", "type": "USES"},
+  {"source": "ui_evaluation_page", "target": "frontend_api_client", "type": "USES"},
+  {"source": "ui_history_page", "target": "frontend_api_client", "type": "USES"},
+  {"source": "ui_monitor_page", "target": "frontend_api_client", "type": "USES"},
+
+  {"source": "frontend_api_client", "target": "api_synthesis_route", "type": "CALLS"},
+  {"source": "frontend_api_client", "target": "api_profiles_route", "type": "CALLS"},
+  {"source": "frontend_api_client", "target": "api_monitoring_route", "type": "CALLS"},
+  {"source": "frontend_api_client", "target": "api_models_route", "type": "CALLS"},
+  {"source": "frontend_api_client", "target": "api_audio_route", "type": "CALLS"},
+
+  {"source": "api_synthesis_route", "target": "service_synthesis", "type": "USES"},
+  {"source": "api_profiles_route", "target": "service_profile", "type": "USES"},
+  {"source": "api_monitoring_route", "target": "system_monitor", "type": "CALLS"},
+  {"source": "api_audio_route", "target": "audio_processor", "type": "USES"},
+
+  {"source": "service_synthesis", "target": "ml_model_adapter", "type": "CALLS"},
+  {"source": "service_synthesis", "target": "db_generation_job", "type": "PERSISTS_TO"},
+  {"source": "service_profile", "target": "db_voice_profile", "type": "PERSISTS_TO"},
+  {"source": "service_profile", "target": "audio_processor", "type": "VALIDATES"},
+
+  {"source": "ml_model_adapter", "target": "ml_inference_engine", "type": "USES"},
+  {"source": "ml_inference_engine", "target": "ml_model_config", "type": "CONFIGURED_BY"},
+  {"source": "ml_inference_engine", "target": "audio_processor", "type": "USES"},
+  {"source": "ml_inference_engine", "target": "evaluation_metrics", "type": "CALLS"},
+  {"source": "ml_inference_engine", "target": "storage_outputs", "type": "GENERATES"},
+  {"source": "service_profile", "target": "storage_references", "type": "WRITES"},
+
+  {"source": "test_backend_e2e", "target": "fastapi_main", "type": "TESTED_BY"},
+  {"source": "test_unit_audio", "target": "audio_processor", "type": "TESTED_BY"},
+  {"source": "test_api_suite", "target": "api_synthesis_route", "type": "TESTED_BY"}
+]
