@@ -66,21 +66,29 @@ export const StudioPage: React.FC<StudioPageProps> = ({
   const handleGenerate = async () => {
     if (!targetText.trim()) return;
     setIsGenerating(true);
-    setProgressPercent(3);
+    setProgressPercent(6);
     setProgressStage('Initializing neural voice cloning engine...');
     setElapsedSeconds(0);
 
     const startTime = Date.now();
     const pollInterval = setInterval(async () => {
+      const elapsed = Math.round((Date.now() - startTime) / 1000);
+      setElapsedSeconds(elapsed);
       try {
         const prog = await SynthesisAPI.getProgress();
-        if (prog && typeof prog.percent === 'number') {
+        if (prog && typeof prog.percent === 'number' && prog.percent > 0) {
           setProgressPercent(prog.percent);
           if (prog.stage) setProgressStage(prog.stage);
+        } else {
+          // Dynamic client interpolation while waiting for first backend frame
+          const estimated = Math.min(84, Math.round(6 + 78 * (1.0 - Math.exp(-elapsed / 14.0))));
+          setProgressPercent(prev => Math.max(prev, estimated));
         }
-        setElapsedSeconds(Math.round((Date.now() - startTime) / 1000));
-      } catch (_) {}
-    }, 350);
+      } catch (_) {
+        const estimated = Math.min(84, Math.round(6 + 78 * (1.0 - Math.exp(-elapsed / 14.0))));
+        setProgressPercent(prev => Math.max(prev, estimated));
+      }
+    }, 250);
 
     try {
       const job = await SynthesisAPI.generateSpeech({
@@ -95,7 +103,7 @@ export const StudioPage: React.FC<StudioPageProps> = ({
       });
       clearInterval(pollInterval);
       setProgressPercent(100);
-      setProgressStage('Speech synthesis complete!');
+      setProgressStage('Speech synthesis complete! Audio ready.');
       setLastJob(job);
       setIsPlaying(false);
       setAudioCurrentTime(0);
@@ -441,7 +449,7 @@ export const StudioPage: React.FC<StudioPageProps> = ({
 
             {/* Glowing Percentage Progress Bar when generating */}
             {isGenerating && (
-              <div 
+              <div
                 className="w-full max-w-[540px] p-4 rounded-2xl border shadow-2xl transition-all duration-300"
                 style={{
                   backgroundColor: 'var(--bg-card)',
@@ -468,14 +476,14 @@ export const StudioPage: React.FC<StudioPageProps> = ({
                 </div>
 
                 {/* The Progress Track and Animated Gradient Fill */}
-                <div 
+                <div
                   className="relative w-full h-3 rounded-full overflow-hidden border"
                   style={{
                     backgroundColor: 'var(--bg-card-inner)',
                     borderColor: 'var(--border-inner)'
                   }}
                 >
-                  <div 
+                  <div
                     className="h-full rounded-full transition-all duration-300 ease-out relative"
                     style={{
                       width: `${Math.max(4, Math.min(100, progressPercent))}%`,

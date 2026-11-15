@@ -73,8 +73,10 @@ class VoiceCloningEngine:
         self.sample_rate: int = cfg.sample_rate
         self._tts: Optional["F5TTS"] = None
         self._asr: Optional[Callable[..., Any]] = None
-        self._lock = threading.Lock()
+        self._model_lock = threading.Lock()
+        self._progress_lock = threading.Lock()
         self.last_error: Optional[str] = None
+        self._active_task_id: Optional[str] = None
         self.progress: Dict[str, Any] = {
             "is_running": False,
             "percent": 0,
@@ -83,11 +85,13 @@ class VoiceCloningEngine:
         }
 
     def get_progress(self) -> Dict[str, Any]:
-        with self._lock:
+        with self._progress_lock:
             return dict(self.progress)
 
-    def _update_progress(self, percent: int, stage: str, elapsed: float = 0.0) -> None:
-        with self._lock:
+    def _update_progress(self, percent: int, stage: str, elapsed: float = 0.0, task_id: Optional[str] = None) -> None:
+        with self._progress_lock:
+            if task_id is not None and self._active_task_id != task_id:
+                return
             self.progress["percent"] = min(100, max(0, percent))
             self.progress["stage"] = stage
             self.progress["is_running"] = percent < 100
@@ -100,11 +104,11 @@ class VoiceCloningEngine:
         return self._tts is not None
 
     def load(self) -> None:
-        with self._lock:
+        with self._model_lock:
             self._load_unlocked()
 
     def _load_unlocked(self) -> "F5TTS":
-        """Load the model if needed and return it (caller must hold the lock)."""
+        """Load the model if needed and return it (caller must hold _model_lock)."""
         if self._tts is not None:
             return self._tts
         try:
@@ -124,7 +128,7 @@ class VoiceCloningEngine:
             ) from exc
 
     def unload(self) -> None:
-        with self._lock:
+        with self._model_lock:
             self._tts = None
             self._asr = None
             gc.collect()
@@ -198,9 +202,11 @@ class VoiceCloningEngine:
         if seed is not None:
             infer_kwargs["seed"] = int(seed)
 
-        with self._lock:
+        with self._model_lock:
             tts = self._load_unlocked()
-            wav, sr, _spec = tts.infer(**infer_kwargs)
+
+        # Run inference unlocked so progress polling is completely non-blocking
+        wav, sr, _spec = tts.infer(**infer_kwargs)
 
         if wav is None:
             raise RuntimeError("F5-TTS returned no audio.")
@@ -226,22 +232,29 @@ class VoiceCloningEngine:
         psutil.cpu_percent(interval=None)
         start_rss = proc.memory_info().rss
 
-        self._update_progress(5, "Analyzing speaker reference voice & acoustic timbre...", 0.0)
+        task_id = uuid.uuid4().hex
+        with self._progress_lock:
+            self._active_task_id = task_id
 
-        # Background progress stepper while ODE runs on CPU
+        self._update_progress(6, "Analyzing speaker reference voice & acoustic timbre...", 0.0, task_id=task_id)
+
+        # Background progress stepper while flow-matching ODE runs on CPU
         stop_event = threading.Event()
 
         def _ode_ticker():
             ode_start = time.time()
-            while not stop_event.wait(0.4):
+            while not stop_event.wait(0.25):
+                if self._active_task_id != task_id:
+                    break
                 el = time.time() - ode_start
-                # Smooth curve: reaches ~40% around 12s, ~70% around 35s, capped at 83%
-                p = min(83, int(18 + 65 * (1.0 - math.exp(-el / 28.0))))
-                with self._lock:
-                    self.progress["percent"] = p
-                    self.progress["stage"] = f"Solving flow-matching ODE on CPU ({p}%)..."
-                    self.progress["is_running"] = True
-                    self.progress["elapsed_seconds"] = round(time.time() - start_time, 1)
+                # Smooth progressive curve: reaches ~25% at 4s, ~50% at 10s, ~75% at 20s, caps at 84%
+                p = min(84, int(10 + 74 * (1.0 - math.exp(-el / 14.0))))
+                stage = (
+                    "Analyzing reference acoustic timbre & phonetics..." if p < 18
+                    else f"Solving flow-matching ODE on CPU ({p}%)..." if p < 75
+                    else "Synthesizing high-fidelity mel spectrogram..."
+                )
+                self._update_progress(p, stage, time.time() - start_time, task_id=task_id)
 
         ticker = threading.Thread(target=_ode_ticker, daemon=True)
         ticker.start()
@@ -251,23 +264,23 @@ class VoiceCloningEngine:
                 ref_audio_path, ref_transcript, target_text, speech_speed, temperature, seed
             )
         except Exception as exc:
-            self._update_progress(0, f"Inference failed: {exc}", time.time() - start_time)
+            self._update_progress(0, f"Inference failed: {exc}", time.time() - start_time, task_id=task_id)
             raise
         finally:
             stop_event.set()
             ticker.join(timeout=1.0)
 
         if wav.size == 0:
-            self._update_progress(0, "F5-TTS produced an empty waveform.", time.time() - start_time)
+            self._update_progress(0, "F5-TTS produced an empty waveform.", time.time() - start_time, task_id=task_id)
             raise RuntimeError("F5-TTS produced an empty waveform.")
 
-        self._update_progress(85, "Synthesizing waveform with Vocos 24kHz neural vocoder...", time.time() - start_time)
+        self._update_progress(88, "Decoding 24 kHz waveform with Vocos neural vocoder...", time.time() - start_time, task_id=task_id)
         wav = self._pitch_shift(wav, sr, pitch)
         peak = float(np.max(np.abs(wav)))
         if peak > 0.99:
             wav = wav / peak * 0.95
 
-        self._update_progress(90, "Writing lossless WAV audio file...", time.time() - start_time)
+        self._update_progress(92, "Writing lossless WAV audio file...", time.time() - start_time, task_id=task_id)
         output_filename = f"gen_{uuid.uuid4().hex[:10]}.wav"
         output_path = OUTPUTS_DIR / output_filename
         sf.write(str(output_path), wav, sr, subtype="PCM_16")
@@ -277,7 +290,7 @@ class VoiceCloningEngine:
         peak_ram = round(max(start_rss, proc.memory_info().rss) / (1024**2), 1)
 
         # Independent evaluation: real ASR transcript of the generated audio.
-        self._update_progress(93, "Evaluating text accuracy (WER/CER) with Whisper ASR...", time.time() - start_time)
+        self._update_progress(95, "Evaluating text accuracy (WER/CER) with Whisper ASR...", time.time() - start_time, task_id=task_id)
         out_meta = AudioProcessor.inspect_audio(output_path)
         recognized = self.transcribe(wav, sr)
         wer: Optional[float] = None
@@ -286,10 +299,10 @@ class VoiceCloningEngine:
             wer = float(compute_wer(target_text, recognized)["wer"])
             cer = float(compute_cer(target_text, recognized)["cer"])
 
-        self._update_progress(98, "Computing acoustic speaker similarity matrix...", time.time() - start_time)
+        self._update_progress(98, "Computing acoustic speaker similarity matrix...", time.time() - start_time, task_id=task_id)
         speaker_sim = round(compute_speaker_similarity(str(ref_audio_path), str(output_path)), 4)
 
-        self._update_progress(100, "Speech synthesis complete!", inference_time)
+        self._update_progress(100, "Speech synthesis complete!", inference_time, task_id=task_id)
 
         return {
             "output_path": str(output_path),
