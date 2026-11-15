@@ -21,9 +21,17 @@ from pathlib import Path
 import pytest
 
 try:
-    from voicestudio.core.security import StorageSecurity, FileIntegrityError
+    from voicestudio.core.security import (
+        StorageSecurity,
+        FileIntegrityError,
+        InvalidBindAddressError,
+    )
 except ImportError:
-    from tests.contracts import StorageSecurity, FileIntegrityError
+    from tests.contracts import (
+        StorageSecurity,
+        FileIntegrityError,
+        InvalidBindAddressError,
+    )
 
 
 @pytest.mark.unit
@@ -123,21 +131,40 @@ class TestStorageSecurityTier2:
 
     def test_tc_t2_bnd_sec_05_localhost_loopback_validation(self):
         """TC-T2-BND-SEC-05: Server binds strictly to localhost loopback 127.0.0.1."""
-        valid_hosts = ["127.0.0.1", "localhost"]
-        invalid_hosts = ["0.0.0.0", "192.168.1.10", "10.0.0.1", "example.com"]
+        valid_hosts = ["127.0.0.1", "localhost", "::1", "127.0.0.2", "127.1.0.1"]
+        invalid_hosts = [
+            "0.0.0.0",
+            "::",
+            "192.168.1.10",
+            "10.0.0.1",
+            "172.16.0.1",
+            "8.8.8.8",
+            "example.com",
+            "evil.com",
+            "",
+            "127.0.0.1:3900",
+        ]
         
         for h in valid_hosts:
-            assert h in ["127.0.0.1", "localhost"]
+            validated = StorageSecurity.validate_bind_address(h)
+            assert validated == h.strip().lower()
 
         for h in invalid_hosts:
-            assert h not in ["127.0.0.1", "localhost"]
+            with pytest.raises(InvalidBindAddressError):
+                StorageSecurity.validate_bind_address(h)
 
     def test_tc_t2_bnd_sec_06_security_headers_constants(self):
         """TC-T2-BND-SEC-06: Security headers contain nosniff and frame deny."""
-        headers = {
-            "X-Content-Type-Options": "nosniff",
-            "X-Frame-Options": "DENY",
-            "Content-Security-Policy": "default-src 'self'",
-        }
-        assert headers["X-Content-Type-Options"] == "nosniff"
-        assert headers["X-Frame-Options"] == "DENY"
+        headers = StorageSecurity.SECURITY_HEADERS
+        assert isinstance(headers, dict)
+        assert headers.get("X-Content-Type-Options") == "nosniff"
+        assert headers.get("X-Frame-Options") == "DENY"
+        assert "Content-Security-Policy" in headers
+        assert "default-src 'self'" in headers["Content-Security-Policy"]
+
+        # Verify apply_security_headers utility properly populates headers
+        target_dict: dict[str, str] = {}
+        applied = StorageSecurity.apply_security_headers(target_dict)
+        assert applied["X-Content-Type-Options"] == "nosniff"
+        assert applied["X-Frame-Options"] == "DENY"
+        assert applied["Content-Security-Policy"] == "default-src 'self'"

@@ -78,12 +78,15 @@ class TestVoiceClonerContractsTier1:
 class TestAsrEvaluatorContractsTier1:
     """Tier 1: Feature Coverage for ASR & Accuracy Metrics."""
 
-    def test_tc_t1_asr_01_transcribe_returns_normalized_string(self, clean_wav_file):
-        """TC-T1-ASR-01: ASR transcribes English reference audio returning text."""
+    def test_tc_t1_asr_01_transcribe_returns_normalized_string(self, clean_wav_file, short_wav_file):
+        """TC-T1-ASR-01: ASR transcribes English reference audio returning content-driven text."""
         evaluator = AsrEvaluator()
-        text = evaluator.transcribe(clean_wav_file)
-        assert isinstance(text, str)
-        assert len(text) > 0
+        text1 = evaluator.transcribe(clean_wav_file)
+        text2 = evaluator.transcribe(short_wav_file)
+        assert isinstance(text1, str) and len(text1) > 0
+        assert isinstance(text2, str) and len(text2) > 0
+        # Dynamic content verification: different audio produces genuinely different transcription
+        assert text1 != text2
 
     def test_tc_t1_asr_02_exact_match_zero_wer_cer(self):
         """TC-T1-ASR-02: Exact match yields 0.0% WER and 0.0% CER."""
@@ -126,6 +129,22 @@ class TestAsrEvaluatorContractsTier1:
         for attr in ["wer", "cer", "substitutions", "deletions", "insertions", "reference_words", "transcribed_text"]:
             assert hasattr(metrics, attr)
 
+    def test_tc_t1_asr_07_evaluate_accuracy_dynamic_levenshtein(self, clean_wav_file):
+        """TC-T1-ASR-07: evaluate_accuracy computes genuine dynamic WER/CER between audio and text."""
+        evaluator = AsrEvaluator()
+        hypothesis = evaluator.transcribe(clean_wav_file)
+        # 1. Exact match against transcribed hypothesis yields 0 errors
+        exact_res = evaluator.evaluate_accuracy(hypothesis, clean_wav_file)
+        assert exact_res.wer == 0.0
+        assert exact_res.cer == 0.0
+        assert exact_res.substitutions == 0
+        assert exact_res.deletions == 0
+        assert exact_res.insertions == 0
+        # 2. Mismatched target text dynamically yields genuine substitutions/insertions
+        mismatch_res = evaluator.evaluate_accuracy("completely different target utterance text", clean_wav_file)
+        assert mismatch_res.wer > 0.0
+        assert (mismatch_res.substitutions + mismatch_res.deletions + mismatch_res.insertions) > 0
+
 
 @pytest.mark.unit
 class TestSpeakerVerificationContractsTier1:
@@ -144,6 +163,11 @@ class TestSpeakerVerificationContractsTier1:
         metrics = sv.compute_similarity(clean_wav_file, clean_wav_file)
         assert metrics.cosine_similarity >= 0.98
         assert metrics.calibrated_percentage >= 98.0
+        # Assert that compute_similarity directly computed torch cosine similarity on extracted embeddings
+        e1 = sv.extract_embedding(clean_wav_file)
+        e2 = sv.extract_embedding(clean_wav_file)
+        raw_cos = float(torch.nn.functional.cosine_similarity(e1.unsqueeze(0), e2.unsqueeze(0)).item())
+        assert metrics.cosine_similarity == pytest.approx(raw_cos, abs=1e-5)
 
     def test_tc_t1_spk_03_different_speakers_lower_similarity(self, clean_wav_file, short_wav_file):
         """TC-T1-SPK-03: Different audio files yield lower similarity."""

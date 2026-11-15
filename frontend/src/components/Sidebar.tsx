@@ -25,23 +25,29 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, setCurrentTab, sys
   ];
 
   return (
-    <aside className="w-[240px] bg-[#0b0d1b] border-r border-[#191e38] flex flex-col justify-between shrink-0 h-screen sticky top-0 select-none z-30">
+    <aside 
+      className="w-[240px] border-r flex flex-col justify-between shrink-0 h-screen sticky top-0 select-none z-30 transition-colors"
+      style={{ 
+        backgroundColor: 'var(--bg-sidebar)',
+        borderColor: 'var(--border-card)'
+      }}
+    >
       <div>
-        {/* Logo Section */}
+        {/* Logo Section matching Image 1 */}
         <div className="pt-7 pb-6 px-6 flex items-center gap-3">
           {/* Waveform Logo Icon matching Image 1 */}
           <div className="flex items-center gap-1 h-6">
-            <span className="w-1 h-3.5 bg-cyan-400 rounded-full"></span>
+            <span className="w-1 h-3.5 bg-cyan-400 rounded-full animate-pulse"></span>
             <span className="w-1 h-6 bg-cyan-300 rounded-full"></span>
             <span className="w-1 h-4.5 bg-purple-400 rounded-full"></span>
             <span className="w-1 h-7 bg-purple-500 rounded-full"></span>
-            <span className="w-1 h-3 bg-purple-600 rounded-full"></span>
+            <span className="w-1 h-3 bg-purple-600 rounded-full animate-pulse"></span>
           </div>
           <div>
-            <h1 className="text-xl font-bold tracking-tight text-white leading-tight font-sans">
+            <h1 className="text-xl font-bold tracking-tight leading-tight font-sans" style={{ color: 'var(--text-primary)' }}>
               VoiceStudio
             </h1>
-            <p className="text-[11px] text-slate-400 font-medium tracking-normal mt-0.5">
+            <p className="text-[11px] font-medium tracking-normal mt-0.5" style={{ color: 'var(--text-secondary)' }}>
               Voice Cloning Studio
             </p>
           </div>
@@ -55,10 +61,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, setCurrentTab, sys
               <button
                 key={item.id}
                 onClick={() => setCurrentTab(item.id)}
-                className={`w-full flex items-center gap-3.5 px-4 py-3 rounded-2xl text-[13.5px] font-semibold transition-all ${
+                className={`w-full flex items-center gap-3.5 px-4 py-3 rounded-2xl text-[13.5px] font-semibold transition-all cursor-pointer ${
                   isActive
                     ? 'active-nav-glow text-white'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-[#13172e]'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-[#13172e] dark:hover:bg-[#13172e] light:hover:bg-slate-100 light:text-slate-600'
                 }`}
               >
                 {/* Custom Icons matching Image 1 */}
@@ -84,22 +90,28 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, setCurrentTab, sys
       </div>
 
       {/* Bottom Status Card matching Image 1 */}
-      <div className="p-4 m-3.5 rounded-2xl bg-[#101328] border border-[#1c2242] shadow-lg">
+      <div 
+        className="p-4 m-3.5 rounded-2xl border shadow-lg transition-colors"
+        style={{ 
+          backgroundColor: 'var(--bg-card)',
+          borderColor: 'var(--border-card)'
+        }}
+      >
         <div className="flex items-center gap-2 mb-2">
           <span className="relative flex h-2.5 w-2.5">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
             <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
           </span>
-          <span className="text-xs font-bold text-white tracking-wide">
+          <span className="text-xs font-bold tracking-wide" style={{ color: 'var(--text-primary)' }}>
             {systemMetrics?.device || 'Local (CPU)'}
           </span>
         </div>
-        <div className="text-[11.5px] text-slate-400 font-medium">
+        <div className="text-[11.5px] font-medium" style={{ color: 'var(--text-secondary)' }}>
           Model: {systemMetrics?.model_name || 'IndicF5 (English)'}
         </div>
-        <div className="text-[11.5px] text-slate-400 mt-1 flex justify-between">
+        <div className="text-[11.5px] mt-1 flex justify-between" style={{ color: 'var(--text-secondary)' }}>
           <span>RAM: {systemMetrics ? `${systemMetrics.ram_total_gb} GB` : '16 GB'}</span>
-          <span className="text-slate-400">
+          <span>
             Status: <span className="text-emerald-400 font-semibold">Ready</span>
           </span>
         </div>

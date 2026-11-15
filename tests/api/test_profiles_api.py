@@ -1,5 +1,5 @@
 """
-Tier 1 & Tier 2 API Tests: Voice Profiles & Audio Validation (10 Test Cases).
+Tier 1 & Tier 2 API Tests: Voice Profiles & Audio Validation (11 Test Cases).
 Coverage:
 - Create voice profile with valid metadata and consent (201 Created)
 - Mandatory consent enforcement (400 / 422 Bad Request on missing consent)
@@ -135,3 +135,14 @@ class TestProfilesApi:
             files={"file": ("notes.txt", io.BytesIO(b"Just text"), "text/plain")},
         )
         assert res.status_code == 400
+
+    def test_tc_api_prof_11_upload_exceeding_50mb_rejected(self, client: TestClient):
+        """TC-T2-BND-SEC-06: Extremely large multipart upload (>50MB audio file) rejected with HTTP 413."""
+        oversized_bytes = 50 * 1024 * 1024 + 1  # 52,428,801 bytes (>50MB)
+        large_buffer = io.BytesIO(b"0" * oversized_bytes)
+        res = client.post(
+            "/api/v1/clone/validate",
+            files={"file": ("oversized_reference.wav", large_buffer, "audio/wav")},
+        )
+        assert res.status_code == 413
+        assert "50MB" in res.json().get("detail", "")

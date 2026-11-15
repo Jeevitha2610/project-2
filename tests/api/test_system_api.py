@@ -61,11 +61,27 @@ class TestSystemApi:
         assert "process_rss_mb" in data
         assert data["process_rss_mb"] > 0
 
-    def test_tc_api_sys_06_localhost_loopback_guard(self):
-        """TC-T1-SEC-02: Strict localhost binding verification."""
-        allowed_hosts = {"127.0.0.1", "localhost"}
-        server_host = "127.0.0.1"
-        assert server_host in allowed_hosts
+    def test_tc_api_sys_06_localhost_loopback_guard(self, client: TestClient):
+        """TC-T1-SEC-02 / TC-T2-BND-SEC-04: Strict localhost binding and Host header spoofing defense."""
+        # 1. Permitted loopback host headers return HTTP 200
+        res_local = client.get("/api/v1/system/health", headers={"Host": "localhost"})
+        assert res_local.status_code == 200
+        assert res_local.json()["status"] == "ok"
+
+        res_ip = client.get("/api/v1/system/health", headers={"Host": "127.0.0.1"})
+        assert res_ip.status_code == 200
+        assert res_ip.json()["status"] == "ok"
+
+        # 2. Spoofed non-localhost host headers are rejected with HTTP 400 Invalid Host
+        res_evil = client.get("/api/v1/system/health", headers={"Host": "evil.com"})
+        assert res_evil.status_code == 400
+        assert "Invalid host header" in res_evil.text
+
+        res_lan = client.get("/api/v1/system/health", headers={"Host": "192.168.1.100"})
+        assert res_lan.status_code == 400
+
+        res_wildcard = client.get("/api/v1/system/health", headers={"Host": "0.0.0.0"})
+        assert res_wildcard.status_code == 400
 
     def test_tc_api_sys_07_security_headers_injected(self, client: TestClient):
         """TC-T1-SEC-03: Responses contain nosniff and frame deny security headers."""

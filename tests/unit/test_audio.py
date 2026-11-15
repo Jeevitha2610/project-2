@@ -307,6 +307,38 @@ class TestAudioValidatorQualityGates:
         with pytest.raises(AudioSilentError):
             validator.validate_or_raise(silent, sample_rate_24k)
 
+    def test_multi_failure_short_and_silent(
+        self, validator: AudioValidator, sample_rate_24k: int
+    ):
+        """1.0s of silence violates both duration (too short) and silence.
+        Structural duration bounds must take precedence, raising AudioTooShortError
+        with 'below minimum' in message.
+        """
+        short_silent = np.zeros(sample_rate_24k * 1, dtype=np.float32)  # 1.0s
+        res = validator.validate_quality(short_silent, sample_rate_24k)
+        assert not res.is_valid
+        assert res.duration_sec < 3.0
+        assert res.is_silent
+        with pytest.raises(AudioTooShortError) as exc_info:
+            validator.validate_or_raise(short_silent, sample_rate_24k)
+        assert "below minimum" in str(exc_info.value)
+
+    def test_multi_failure_long_and_silent(
+        self, validator: AudioValidator, sample_rate_24k: int
+    ):
+        """35.0s of silence violates both duration (too long) and silence.
+        Structural duration bounds must take precedence, raising AudioTooLongError
+        with 'exceeds maximum' in message.
+        """
+        long_silent = np.zeros(sample_rate_24k * 35, dtype=np.float32)  # 35.0s
+        res = validator.validate_quality(long_silent, sample_rate_24k)
+        assert not res.is_valid
+        assert res.duration_sec > 30.0
+        assert res.is_silent
+        with pytest.raises(AudioTooLongError) as exc_info:
+            validator.validate_or_raise(long_silent, sample_rate_24k)
+        assert "exceeds maximum" in str(exc_info.value)
+
     def test_quality_gate_reject_low_snr(
         self, validator: AudioValidator, sample_rate_24k: int, clean_speech_audio: np.ndarray
     ):

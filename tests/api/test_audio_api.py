@@ -1,5 +1,5 @@
 """
-Tier 1 & Tier 2 API Tests: Audio Streaming, Peak Blocks, and WAV Download (7 Test Cases).
+Tier 1 & Tier 2 API Tests: Audio Streaming, Peak Blocks, and WAV Download (9 Test Cases).
 Coverage:
 - TC-T1-STR-01: HTTP 206 Partial Content with Range: bytes=0-1024
 - TC-T1-STR-02: Full audio stream delivery (HTTP 200) with Accept-Ranges
@@ -8,6 +8,8 @@ Coverage:
 - TC-T1-STR-06: Non-existent audio ID returns HTTP 404
 - TC-T2-BND-AUD-07: Out-of-bounds byte range returns HTTP 416
 - TC-T2-BND-AUD-08: Non-existent audio download returns HTTP 404
+- TC-T2-BND-AUD-09: Multipart byte range requests return HTTP 416
+- TC-T2-BND-AUD-10: Malformed range header returns HTTP 416
 """
 
 from pathlib import Path
@@ -91,3 +93,19 @@ class TestAudioApi:
         """Requesting download for unknown audio ID returns 404."""
         res = client.get("/api/v1/audio/aud-unknown/download")
         assert res.status_code == 404
+
+    def test_tc_t2_bnd_aud_09_multipart_range_rejected_416(
+        self, client: TestClient, registered_audio_id: str
+    ):
+        """Multipart byte range requests return HTTP 416 Range Not Satisfiable."""
+        headers = {"Range": "bytes=0-100, 200-300"}
+        res = client.get(f"/api/v1/audio/{registered_audio_id}", headers=headers)
+        assert res.status_code == 416
+
+    def test_tc_t2_bnd_aud_10_malformed_range_syntax_rejected_416(
+        self, client: TestClient, registered_audio_id: str
+    ):
+        """Malformed range header with trailing characters returns HTTP 416."""
+        headers = {"Range": "bytes=0-100junk"}
+        res = client.get(f"/api/v1/audio/{registered_audio_id}", headers=headers)
+        assert res.status_code == 416

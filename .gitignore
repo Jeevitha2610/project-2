@@ -1,8 +1,57 @@
-.venv/
+# Byte-compiled / optimized / DLL files
 __pycache__/
+*.py[cod]
+*$py.class
+*.so
 *.pyc
+
+# Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+
+# Node & Frontend
 node_modules/
 frontend/dist/
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.hypothesis/
+
+# Runtime Data & Storage
+data/references/*
+!data/references/.gitkeep
+data/generated/*
+!data/generated/.gitkeep
+data/studio.db*
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/*.sqlite*
 data/cache/
-*.log
+
+# Machine Learning Models & Heavy Checkpoints
+models/
+checkpoints/
+*.pt
+*.bin
+*.safetensors
+*.onnx
+*.ckpt
+*.pth
+
+# Operating System & IDE
 .DS_Store
+Thumbs.db
+*.tmp
+*.temp
+.idea/
+.vscode/
+*.log
+
+# Do NOT ignore reference samples (mandatory tracking)
+!data/reference_samples/
+!data/reference_samples/**

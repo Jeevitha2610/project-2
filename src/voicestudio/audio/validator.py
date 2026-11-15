@@ -415,14 +415,19 @@ class AudioValidator:
         max_clip = getattr(self_or_cls, "max_clipping_ratio", 0.001)
         min_snr = getattr(self_or_cls, "min_snr_db", 15.0)
 
-        if res.is_silent:
-            raise AudioSilentError(f"Audio validation failed: {res.reasons[0]}")
         if res.duration_sec < min_dur:
-            raise AudioTooShortError(f"Audio validation failed: {res.reasons[0]}")
+            msg = next((r for r in res.reasons if "below minimum" in r), res.reasons[0])
+            raise AudioTooShortError(f"Audio validation failed: {msg}")
         if res.duration_sec > max_dur:
-            raise AudioTooLongError(f"Audio validation failed: {res.reasons[0]}")
+            msg = next((r for r in res.reasons if "exceeds maximum" in r), res.reasons[0])
+            raise AudioTooLongError(f"Audio validation failed: {msg}")
         if res.clipping_ratio > max_clip:
-            raise AudioClippingError(f"Audio validation failed: {res.reasons[0]}")
+            msg = next((r for r in res.reasons if "Clipping" in r), res.reasons[0])
+            raise AudioClippingError(f"Audio validation failed: {msg}")
+        if res.is_silent:
+            msg = next((r for r in res.reasons if "silent" in r), res.reasons[0])
+            raise AudioSilentError(f"Audio validation failed: {msg}")
         if res.snr_db < min_snr:
-            raise ExcessiveNoiseError(f"Audio validation failed: {res.reasons[0]}")
+            msg = next((r for r in res.reasons if "SNR" in r), res.reasons[0])
+            raise ExcessiveNoiseError(f"Audio validation failed: {msg}")
         raise AudioValidationError(f"Audio validation failed: {'; '.join(res.reasons)}")
