@@ -35,7 +35,7 @@ export const StudioPage: React.FC<StudioPageProps> = ({
 }) => {
   // Synthesis Settings State
   const [targetText, setTargetText] = useState('Hello, this is a cloned voice sample generated using VoiceStudio.');
-  const [referenceTranscript, setReferenceTranscript] = useState('This is a reference sentence spoken by me.');
+  const [referenceTranscript, setReferenceTranscript] = useState('Where there is righteousness in the heart, there is beauty in the character.');
   const [speechSpeed, setSpeechSpeed] = useState(1.0);
   const [pitch, setPitch] = useState(0.0);
   const [temperature, setTemperature] = useState(0.7);

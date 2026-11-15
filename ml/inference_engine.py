@@ -196,10 +196,21 @@ class VoiceCloningEngine:
         temperature: float,
         seed: Optional[int],
     ) -> Tuple[np.ndarray, int]:
+        # Clean reference transcript: ensure proper punctuation and trailing space
+        clean_ref = ref_transcript.strip()
+        if not clean_ref.endswith((".", "!", "?", ",")):
+            clean_ref += "."
+        clean_ref += " "
+
+        # Clean target text and prepend an acoustic boundary buffer
+        # This prevents flow-matching frame slicing from cutting into the first words/starting statement
+        clean_target = target_text.strip()
+        buffered_target = ", " + clean_target
+
         infer_kwargs: Dict[str, Any] = {
             "ref_file": str(ref_audio_path),
-            "ref_text": ref_transcript.strip(),
-            "gen_text": target_text.strip(),
+            "ref_text": clean_ref,
+            "gen_text": buffered_target,
             "show_info": _silent_info,
             "speed": float(speech_speed),
             "cfg_strength": self._temperature_to_cfg(temperature),
@@ -220,7 +231,17 @@ class VoiceCloningEngine:
 
         if wav is None:
             raise RuntimeError("F5-TTS returned no audio.")
-        return np.asarray(wav, dtype=np.float32).flatten(), int(sr)
+
+        wav_arr = np.asarray(wav, dtype=np.float32).flatten()
+        # Cleanly trim any leading silence buffer while retaining a smooth 50ms speech onset
+        peak_val = float(np.max(np.abs(wav_arr))) if len(wav_arr) > 0 else 1.0
+        thresh = max(0.015 * peak_val, 1e-4)
+        non_silent = np.where(np.abs(wav_arr) > thresh)[0]
+        if len(non_silent) > 0:
+            onset_idx = max(0, non_silent[0] - int(sr * 0.05))
+            wav_arr = wav_arr[onset_idx:]
+
+        return wav_arr, int(sr)
 
     def synthesize(
         self,
