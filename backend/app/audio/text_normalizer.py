@@ -199,6 +199,10 @@ def normalize_text_input(text: str) -> str:
 
     out = re.sub(r"\b\d+\b", _replace_number, out)
 
+    # 9. Split camelCase / Compound words and hyphens for phonetic fidelity
+    out = re.sub(r"([a-z])([A-Z])", r"\1 \2", out)
+    out = re.sub(r"[-_]", " ", out)
+
     # Clean whitespace
     out = re.sub(r"\s+", " ", out).strip()
     return out

@@ -147,7 +147,7 @@ class VoiceCloningEngine:
             if threads_env and threads_env.isdigit():
                 num_threads = int(threads_env)
             else:
-                num_threads = max(1, psutil.cpu_count(logical=False) or 4)
+                num_threads = min(4, psutil.cpu_count(logical=False) or 4)
             torch.set_num_threads(num_threads)
 
             tts = F5TTS(model=self.model_id, device="cpu")

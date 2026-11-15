@@ -24,7 +24,13 @@ def get_ecapa_classifier():
 
 
 def normalize_text(text: str) -> str:
-    """Normalizes text for evaluation: lowercases, strips punctuation, normalizes whitespace."""
+    """Normalizes text for evaluation: handles compound words, hyphens, lowercases, strips punctuation."""
+    if not text:
+        return ""
+    # Split camelCase / CamelCase (e.g. VoiceStudio -> Voice Studio)
+    text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
+    # Split hyphens and underscores
+    text = re.sub(r"[-_]", " ", text)
     text = text.lower()
     text = re.sub(r"[^\w\s]", "", text)
     text = re.sub(r"\s+", " ", text).strip()

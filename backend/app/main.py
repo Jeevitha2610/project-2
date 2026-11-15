@@ -19,8 +19,8 @@ _configured_threads = os.environ.get("VOICESTUDIO_NUM_THREADS")
 if _configured_threads and _configured_threads.isdigit():
     torch.set_num_threads(int(_configured_threads))
 else:
-    # Default to physical cores (P-cores)
-    p_cores = psutil.cpu_count(logical=False) or 4
+    # Intel 13th Gen H physical P-cores count is 4 (avoids E-core thread lag)
+    p_cores = min(4, psutil.cpu_count(logical=False) or 4)
     torch.set_num_threads(max(1, p_cores))
 
 from backend.app.core.config import settings, REFERENCES_DIR, OUTPUTS_DIR
