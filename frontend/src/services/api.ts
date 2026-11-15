@@ -28,20 +28,28 @@ export const ProfileAPI = {
 };
 
 export const SynthesisAPI = {
-  generateSpeech: async (payload: {
-    profile_id?: string;
-    profile_name?: string;
-    target_text: string;
-    speech_speed: number;
-    pitch: number;
-    temperature: number;
-    seed?: number;
-    output_format: string;
-    reference_audio_name?: string;
-    reference_transcript?: string;
-  }): Promise<GenerationJob> => {
-    const res = await api.post('/synthesis/generate', payload);
+  generateSpeech: async (
+    payload: {
+      profile_id?: string;
+      profile_name?: string;
+      target_text: string;
+      speech_speed: number;
+      pitch: number;
+      temperature: number;
+      seed?: number;
+      output_format: string;
+      reference_audio_name?: string;
+      reference_transcript?: string;
+    },
+    signal?: AbortSignal
+  ): Promise<GenerationJob> => {
+    const res = await api.post('/synthesis/generate', payload, { signal });
     return res.data;
+  },
+  cancelGeneration: async (): Promise<void> => {
+    try {
+      await api.post('/synthesis/cancel');
+    } catch (_) {}
   },
   getHistory: async (): Promise<GenerationJob[]> => {
     const res = await api.get('/synthesis/history');

@@ -18,6 +18,12 @@ def get_synthesis_progress():
     from ml.inference_engine import voice_cloning_engine
     return voice_cloning_engine.get_progress()
 
+@router.post("/cancel")
+def cancel_synthesis():
+    from ml.inference_engine import voice_cloning_engine
+    voice_cloning_engine.cancel_synthesis()
+    return {"message": "Synthesis job cancelled by user", "status": "cancelled"}
+
 @router.get("/history", response_model=List[SynthesisResponse])
 def get_history(limit: int = 50, db: Session = Depends(get_db)):
     return SynthesisService.get_history(db, limit)

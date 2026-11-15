@@ -12,7 +12,8 @@ import {
   Save,
   Settings,
   ChevronDown,
-  Upload
+  Upload,
+  XCircle
 } from 'lucide-react';
 import type { VoiceProfile, GenerationJob, SystemMetrics } from '../types';
 import { SynthesisAPI, ProfileAPI, AudioAPI } from '../services/api';
@@ -44,6 +45,7 @@ export const StudioPage: React.FC<StudioPageProps> = ({
   const [progressStage, setProgressStage] = useState('');
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [lastJob, setLastJob] = useState<GenerationJob | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // Audio Playback State for Output
   const [isPlaying, setIsPlaying] = useState(false);
@@ -54,6 +56,13 @@ export const StudioPage: React.FC<StudioPageProps> = ({
   const [isRefPlaying, setIsRefPlaying] = useState(false);
   const refAudioRef = useRef<HTMLAudioElement | null>(null);
 
+  // Auto-reload output audio when a new job arrives
+  useEffect(() => {
+    if (lastJob?.output_audio_url && audioRef.current) {
+      audioRef.current.load();
+    }
+  }, [lastJob]);
+
   // Update transcript when selected profile changes or auto-select first profile
   useEffect(() => {
     if (selectedProfile) {
@@ -63,12 +72,26 @@ export const StudioPage: React.FC<StudioPageProps> = ({
     }
   }, [selectedProfile, profiles, setSelectedProfile]);
 
+  const handleCancel = async () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    await SynthesisAPI.cancelGeneration();
+    setIsGenerating(false);
+    setProgressPercent(0);
+    setProgressStage('Generation cancelled by user');
+  };
+
   const handleGenerate = async () => {
     if (!targetText.trim()) return;
     setIsGenerating(true);
     setProgressPercent(6);
-    setProgressStage('Initializing neural voice cloning engine...');
+    setProgressStage('Step 1/5: Analyzing acoustic timbre & phonetics...');
     setElapsedSeconds(0);
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
 
     const startTime = Date.now();
     const pollInterval = setInterval(async () => {
@@ -77,15 +100,16 @@ export const StudioPage: React.FC<StudioPageProps> = ({
       try {
         const prog = await SynthesisAPI.getProgress();
         if (prog && typeof prog.percent === 'number' && prog.percent > 0) {
-          setProgressPercent(prog.percent);
+          // Strictly monotonic progression: never drop backward
+          setProgressPercent(prev => Math.max(prev, prog.percent));
           if (prog.stage) setProgressStage(prog.stage);
         } else {
-          // Dynamic client interpolation while waiting for first backend frame
-          const estimated = Math.min(84, Math.round(6 + 78 * (1.0 - Math.exp(-elapsed / 14.0))));
+          // Dynamic client interpolation: advances smoothly between poll intervals
+          const estimated = Math.min(85, Math.round(10 + 75 * (1.0 - Math.exp(-elapsed / 12.0))));
           setProgressPercent(prev => Math.max(prev, estimated));
         }
       } catch (_) {
-        const estimated = Math.min(84, Math.round(6 + 78 * (1.0 - Math.exp(-elapsed / 14.0))));
+        const estimated = Math.min(85, Math.round(10 + 75 * (1.0 - Math.exp(-elapsed / 12.0))));
         setProgressPercent(prev => Math.max(prev, estimated));
       }
     }, 250);
@@ -100,24 +124,34 @@ export const StudioPage: React.FC<StudioPageProps> = ({
         temperature: temperature,
         output_format: outputFormat,
         reference_transcript: referenceTranscript
-      });
+      }, controller.signal);
       clearInterval(pollInterval);
       setProgressPercent(100);
-      setProgressStage('Speech synthesis complete! Audio ready.');
+      setProgressStage('Speech synthesis complete! Ready for playback.');
       setLastJob(job);
       setIsPlaying(false);
       setAudioCurrentTime(0);
+      setTimeout(() => {
+        if (audioRef.current) {
+          audioRef.current.load();
+        }
+      }, 100);
     } catch (err: any) {
       clearInterval(pollInterval);
       setProgressPercent(0);
-      setProgressStage('');
-      const detailMsg = err.response?.data?.detail;
-      const errorMsg = detailMsg || (err.message === 'Network Error'
-        ? 'Cannot reach backend server at http://127.0.0.1:8000. Please ensure the backend server is running.'
-        : err.message);
-      alert(`Generation failed: ${errorMsg}`);
+      if (err.name === 'CanceledError' || err.name === 'AbortError') {
+        setProgressStage('Generation cancelled by user');
+      } else {
+        setProgressStage('');
+        const detailMsg = err.response?.data?.detail;
+        const errorMsg = detailMsg || (err.message === 'Network Error'
+          ? 'Cannot reach backend server at http://127.0.0.1:8000. Please ensure the backend server is running.'
+          : err.message);
+        alert(`Generation failed: ${errorMsg}`);
+      }
     } finally {
       clearInterval(pollInterval);
+      abortControllerRef.current = null;
       setTimeout(() => {
         setIsGenerating(false);
       }, 1500);
@@ -147,8 +181,17 @@ export const StudioPage: React.FC<StudioPageProps> = ({
       audioRef.current.pause();
       setIsPlaying(false);
     } else {
-      audioRef.current.play();
-      setIsPlaying(true);
+      audioRef.current.play().then(() => {
+        setIsPlaying(true);
+      }).catch((err) => {
+        console.warn('Playback error, reloading audio element:', err);
+        audioRef.current?.load();
+        audioRef.current?.play().then(() => {
+          setIsPlaying(true);
+        }).catch((e) => {
+          console.error('Final play attempt failed:', e);
+        });
+      });
     }
   };
 
@@ -165,13 +208,15 @@ export const StudioPage: React.FC<StudioPageProps> = ({
 
   return (
     <div className="px-9 py-6 max-w-[1360px] mx-auto space-y-6 relative select-none">
-      {/* Hidden audio players */}
+      {/* Audio player element */}
       {lastJob?.output_audio_url && (
         <audio
           ref={audioRef}
           src={`http://127.0.0.1:8000${lastJob.output_audio_url}`}
+          preload="auto"
           onTimeUpdate={() => setAudioCurrentTime(audioRef.current?.currentTime || 0)}
           onEnded={() => setIsPlaying(false)}
+          onError={(e) => console.warn('Audio element error:', e)}
         />
       )}
       {selectedProfile?.reference_audio_url && (
@@ -456,9 +501,9 @@ export const StudioPage: React.FC<StudioPageProps> = ({
                   borderColor: 'var(--border-card)'
                 }}
               >
-                {/* Header row: Stage text & Percentage badge */}
+                {/* Header row: Stage text, Percentage badge & Cancel button */}
                 <div className="flex items-center justify-between mb-2 text-xs">
-                  <div className="flex items-center gap-2 font-medium truncate max-w-[380px]" style={{ color: 'var(--text-primary)' }}>
+                  <div className="flex items-center gap-2 font-medium truncate max-w-[320px]" style={{ color: 'var(--text-primary)' }}>
                     <span className="relative flex h-2 w-2">
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
                       <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
@@ -472,6 +517,15 @@ export const StudioPage: React.FC<StudioPageProps> = ({
                     <span className="px-2.5 py-0.5 rounded-full text-xs font-bold font-mono bg-gradient-to-r from-purple-500/20 to-blue-500/20 text-cyan-300 border border-cyan-400/40 shadow-sm">
                       {progressPercent}%
                     </span>
+                    <button
+                      type="button"
+                      onClick={handleCancel}
+                      className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 flex items-center gap-1 transition-all cursor-pointer shadow-sm hover:scale-105 active:scale-95"
+                      title="Cancel synthesis work"
+                    >
+                      <XCircle className="w-3 h-3 text-rose-400" />
+                      <span>Cancel</span>
+                    </button>
                   </div>
                 </div>
 
