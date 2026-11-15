@@ -39,6 +39,16 @@ export interface GenerationJob {
   cer: number;
   speaker_similarity: number;
   recognized_transcript?: string;
+  rtf?: number;
+  chunk_metrics?: Array<{
+    chunk_index: number;
+    text: string;
+    wer: number;
+    retries: number;
+    status: string;
+    recognized?: string;
+  }>;
+  total_retries?: number;
   inference_time_seconds: number;
   cpu_peak: number;
   ram_peak_mb: number;

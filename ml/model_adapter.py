@@ -22,7 +22,9 @@ class ModelAdapter:
         speech_speed: float = 1.0,
         pitch: float = 0.0,
         temperature: float = 0.7,
-        seed: Optional[int] = None
+        seed: Optional[int] = None,
+        mode: str = "draft",
+        wer_threshold: float = 0.08,
     ) -> Dict[str, Any]:
         return voice_cloning_engine.synthesize(
             ref_audio_path=ref_audio_path,
@@ -31,5 +33,7 @@ class ModelAdapter:
             speech_speed=speech_speed,
             pitch=pitch,
             temperature=temperature,
-            seed=seed
+            seed=seed,
+            mode=mode,
+            wer_threshold=wer_threshold,
         )

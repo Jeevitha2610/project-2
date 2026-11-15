@@ -38,6 +38,9 @@ export const SynthesisAPI = {
       temperature: number;
       seed?: number;
       output_format: string;
+      mode?: string;
+      wer_threshold?: number;
+      consent_given?: boolean;
       reference_audio_name?: string;
       reference_transcript?: string;
     },

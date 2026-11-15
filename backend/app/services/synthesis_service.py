@@ -1,9 +1,10 @@
 import os
+import hashlib
 from typing import List, Optional
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
 
-from backend.app.database.models import GenerationJob, VoiceProfile
+from backend.app.database.models import GenerationJob, VoiceProfile, AuditRecord
 from backend.app.schemas.synthesis import SynthesisRequest
 from backend.app.services.profile_service import ProfileService
 from ml.model_adapter import ModelAdapter
@@ -53,12 +54,31 @@ class SynthesisService:
                 speech_speed=request.speech_speed,
                 pitch=request.pitch,
                 temperature=request.temperature,
-                seed=request.seed
+                seed=request.seed,
+                mode=request.mode or "draft",
+                wer_threshold=request.wer_threshold or 0.08,
             )
         except ModelNotAvailableError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        # Calculate hashes for SQLite Audit Log
+        try:
+            ref_hash = "unknown"
+            if os.path.exists(ref_path):
+                with open(ref_path, "rb") as rf:
+                    ref_hash = hashlib.sha256(rf.read()).hexdigest()
+            text_hash = hashlib.sha256(request.target_text.encode("utf-8")).hexdigest()
+            audit_entry = AuditRecord(
+                ref_audio_hash=ref_hash,
+                target_text_hash=text_hash,
+                profile_name=profile_name,
+                consent_given=bool(request.consent_given if request.consent_given is not None else True)
+            )
+            db.add(audit_entry)
+        except Exception as audit_err:
+            print(f"Audit log warning: {audit_err}")
 
         # Record Generation Job in Database
         job = GenerationJob(
@@ -84,6 +104,9 @@ class SynthesisService:
             cer=result["cer"],
             speaker_similarity=result["speaker_similarity"],
             recognized_transcript=result["recognized_transcript"],
+            rtf=result.get("rtf", 0.0),
+            chunk_metrics=result.get("chunk_metrics"),
+            total_retries=result.get("total_retries", 0),
             inference_time_seconds=result["inference_time_seconds"],
             cpu_peak=result["cpu_peak"],
             ram_peak_mb=result["ram_peak_mb"]
@@ -98,15 +121,5 @@ class SynthesisService:
         return db.query(GenerationJob).order_by(GenerationJob.created_at.desc()).limit(limit).all()
 
     @staticmethod
-    def delete_generation(db: Session, job_id: str) -> bool:
-        job = db.query(GenerationJob).filter(GenerationJob.id == job_id).first()
-        if not job:
-            raise HTTPException(status_code=404, detail="Generation record not found")
-        if job.output_audio_path and os.path.exists(job.output_audio_path):
-            try:
-                os.remove(job.output_audio_path)
-            except Exception:
-                pass
-        db.delete(job)
-        db.commit()
-        return True
+    def get_job_by_id(db: Session, job_id: str) -> Optional[GenerationJob]:
+        return db.query(GenerationJob).filter(GenerationJob.id == job_id).first()

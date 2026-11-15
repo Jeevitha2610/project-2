@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Float, Integer, Boolean, Text, DateTime, ForeignKey
+from sqlalchemy import Column, String, Float, Integer, Boolean, Text, DateTime, ForeignKey, JSON
 from sqlalchemy.orm import relationship
 from backend.app.database.session import Base
 
@@ -54,6 +54,11 @@ class GenerationJob(Base):
     cer = Column(Float, default=0.0)
     speaker_similarity = Column(Float, default=0.0)
     recognized_transcript = Column(Text, nullable=True)
+    rtf = Column(Float, default=0.0)  # Real-Time Factor: inference_time / duration
+    
+    # Completeness Gate & Chunking
+    chunk_metrics = Column(JSON, nullable=True)
+    total_retries = Column(Integer, default=0)
     
     # Performance & System Resource Metrics
     inference_time_seconds = Column(Float, default=0.0)
@@ -64,6 +69,17 @@ class GenerationJob(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     profile = relationship("VoiceProfile", back_populates="generations")
+
+
+class AuditRecord(Base):
+    __tablename__ = "audit_records"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    timestamp = Column(DateTime, default=datetime.utcnow)
+    ref_audio_hash = Column(String(64), nullable=False)
+    target_text_hash = Column(String(64), nullable=False)
+    profile_name = Column(String(100), nullable=True)
+    consent_given = Column(Boolean, default=True)
 
 
 class ModelRecord(Base):

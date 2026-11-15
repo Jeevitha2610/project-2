@@ -1,24 +1,23 @@
 """Real neural zero-shot English voice cloning on CPU using F5-TTS.
 
-Replaces the earlier DSP sine-wave placeholder (which produced an electronic
-buzz rather than speech). The engine:
-
-* loads the official F5-TTS v1 Base model + Vocos vocoder once (lazy, thread-safe),
-* conditions generation on the reference audio + its exact transcript,
-* optionally pitch-shifts the result (post-process, semitones),
-* transcribes the output with a local Whisper ASR model to compute *real* WER/CER,
-* reports measured inference time, CPU and RAM.
-
-No preset-TTS fallback: if the model cannot load, synthesis raises an error.
+Features:
+* loads official F5-TTS v1 Base model + Vocos vocoder once (kept warm in memory),
+* chunked synthesis on sentence chunks <= 25 words after normalizing numbers/dates/currency/abbreviations,
+* pipelined verification with faster-whisper (int8, CPU) verifying chunk N while chunk N+1 generates,
+* completeness gate: retries chunk if WER > 0.08 up to 4 tries, keeping the best attempt,
+* real ECAPA-TDNN speaker similarity via SpeechBrain with cosine similarity,
+* accurate RTF and acoustic metrics.
 """
 from __future__ import annotations
 
+import concurrent.futures
 import gc
 import math
+import os
 import threading
 import time
 import uuid
-from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import psutil
@@ -48,6 +47,7 @@ except Exception:
     pass
 
 from backend.app.audio.processor import AudioProcessor
+from backend.app.audio.text_normalizer import normalize_text_input, split_into_chunks
 from backend.app.core.config import OUTPUTS_DIR
 from backend.app.evaluation.metrics import compute_cer, compute_speaker_similarity, compute_wer
 from ml.model_config import default_model_config
@@ -62,7 +62,26 @@ class ModelNotAvailableError(RuntimeError):
 
 
 def _silent_info(*_args: Any, **_kwargs: Any) -> None:
-    """Swallow F5-TTS's console progress messages."""
+    """Swallow F5-TTS console progress messages."""
+
+
+def concat_chunks_with_crossfade(chunks: List[np.ndarray], sr: int = 24000, crossfade_ms: int = 50) -> np.ndarray:
+    """Smoothly concatenates audio chunks using a short crossfade to avoid boundary clicks."""
+    if not chunks:
+        return np.array([], dtype=np.float32)
+    if len(chunks) == 1:
+        return chunks[0]
+    fade_len = int(round(sr * crossfade_ms / 1000.0))
+    result = chunks[0]
+    for c in chunks[1:]:
+        if len(result) < fade_len or len(c) < fade_len:
+            result = np.concatenate([result, c])
+        else:
+            fade_out = np.linspace(1.0, 0.0, fade_len, dtype=np.float32)
+            fade_in = np.linspace(0.0, 1.0, fade_len, dtype=np.float32)
+            overlap = result[-fade_len:] * fade_out + c[:fade_len] * fade_in
+            result = np.concatenate([result[:-fade_len], overlap, c[fade_len:]])
+    return result
 
 
 class VoiceCloningEngine:
@@ -73,7 +92,6 @@ class VoiceCloningEngine:
         self.device: str = "CPU"
         self.sample_rate: int = cfg.sample_rate
         self._tts: Optional["F5TTS"] = None
-        self._asr: Optional[Callable[..., Any]] = None
         self._model_lock = threading.Lock()
         self._progress_lock = threading.Lock()
         self.last_error: Optional[str] = None
@@ -100,7 +118,6 @@ class VoiceCloningEngine:
         with self._progress_lock:
             if task_id is not None and self._active_task_id != task_id:
                 return
-            # Guarantee strictly monotonic progress during active job (never drop backwards)
             prev_pct = self.progress.get("percent", 0) if self.progress.get("is_running") else 0
             new_pct = max(prev_pct, min(100, max(0, percent)))
             self.progress["percent"] = new_pct
@@ -119,20 +136,26 @@ class VoiceCloningEngine:
             self._load_unlocked()
 
     def _load_unlocked(self) -> "F5TTS":
-        """Load the model if needed and return it (caller must hold _model_lock)."""
         if self._tts is not None:
             return self._tts
         try:
             import torch
             from f5_tts.api import F5TTS  # type: ignore[import-not-found, unused-ignore]
 
-            torch.set_num_threads(max(1, psutil.cpu_count(logical=False) or 4))
+            # Set torch threads to physical P-cores or configured VOICESTUDIO_NUM_THREADS
+            threads_env = os.environ.get("VOICESTUDIO_NUM_THREADS")
+            if threads_env and threads_env.isdigit():
+                num_threads = int(threads_env)
+            else:
+                num_threads = max(1, psutil.cpu_count(logical=False) or 4)
+            torch.set_num_threads(num_threads)
+
             tts = F5TTS(model=self.model_id, device="cpu")
             self.sample_rate = int(getattr(tts, "target_sample_rate", default_model_config.sample_rate))
             self._tts = tts
             self.last_error = None
             return tts
-        except Exception as exc:  # noqa: BLE001 - surface any load failure
+        except Exception as exc:
             self.last_error = f"{type(exc).__name__}: {exc}"
             raise ModelNotAvailableError(
                 f"F5-TTS model could not be loaded: {self.last_error}"
@@ -141,32 +164,7 @@ class VoiceCloningEngine:
     def unload(self) -> None:
         with self._model_lock:
             self._tts = None
-            self._asr = None
             gc.collect()
-
-    def _get_asr(self) -> Callable[..., Any]:
-        if self._asr is None:
-            from transformers import pipeline  # type: ignore[import-not-found, unused-ignore]
-
-            self._asr = pipeline(
-                "automatic-speech-recognition",
-                model=default_model_config.asr_model_id,
-                device="cpu",
-            )
-        return self._asr
-
-    def transcribe(self, audio: np.ndarray, sr: int) -> Optional[str]:
-        """Independent ASR transcript of ``audio``; ``None`` if ASR is unavailable."""
-        try:
-            if audio.ndim > 1:
-                audio = np.mean(audio, axis=-1 if audio.shape[-1] <= 2 else 0)
-            asr = self._get_asr()
-            result = asr({"raw": audio.astype(np.float32).flatten(), "sampling_rate": sr})
-            text = result.get("text", "") if isinstance(result, dict) else ""
-            return str(text).strip()
-        except Exception as exc:  # noqa: BLE001
-            self.last_error = f"ASR failed: {type(exc).__name__}: {exc}"
-            return None
 
     # --------------------------------------------------------------- synthesis
     @staticmethod
@@ -183,21 +181,18 @@ class VoiceCloningEngine:
 
     @staticmethod
     def _temperature_to_cfg(temperature: float) -> float:
-        """F5-TTS has no sampling temperature. We map the UI 'temperature' to
-        classifier-free-guidance strength: lower temperature -> stronger guidance
-        (tighter adherence), higher -> looser / more varied. Default 0.7 -> 2.0."""
         return float(np.clip(2.0 + (0.7 - temperature) * 1.5, 1.0, 3.5))
 
-    def _infer(
+    def _infer_chunk(
         self,
         ref_audio_path: str,
         ref_transcript: str,
-        target_text: str,
+        chunk_text: str,
         speech_speed: float,
         temperature: float,
         seed: Optional[int],
+        nfe_step: int = 10,
     ) -> Tuple[np.ndarray, int]:
-        # Retrieve from reference cache if available
         cached_ref = reference_cache.get(ref_audio_path)
         if cached_ref is not None:
             effective_ref_path = cached_ref["cleaned_path"]
@@ -205,22 +200,18 @@ class VoiceCloningEngine:
         else:
             effective_ref_path = str(ref_audio_path)
             effective_ref_text = ref_transcript
-            # Populate cache
             reference_cache.set(
                 audio_path=ref_audio_path,
                 cleaned_path=ref_audio_path,
                 transcript=ref_transcript,
             )
 
-        # Clean reference transcript: ensure proper punctuation and trailing space
         clean_ref = effective_ref_text.strip()
         if not clean_ref.endswith((".", "!", "?", ",")):
             clean_ref += "."
         clean_ref += " "
 
-        # Clean target text and prepend an acoustic boundary buffer
-        # This prevents flow-matching frame slicing from cutting into the first words/starting statement
-        clean_target = target_text.strip()
+        clean_target = chunk_text.strip()
         buffered_target = ", " + clean_target
 
         infer_kwargs: Dict[str, Any] = {
@@ -230,26 +221,20 @@ class VoiceCloningEngine:
             "show_info": _silent_info,
             "speed": float(speech_speed),
             "cfg_strength": self._temperature_to_cfg(temperature),
-            "nfe_step": int(default_model_config.nfe_step),
+            "nfe_step": int(nfe_step),
             "remove_silence": False,
         }
-        # Only forward an explicit seed: the "random seed" sentinel differs
-        # between f5-tts releases (None in >=1.0, -1 in older ones), so leaving
-        # it out lets the installed version pick its own default.
         if seed is not None:
             infer_kwargs["seed"] = int(seed)
 
         with self._model_lock:
             tts = self._load_unlocked()
 
-        # Run inference unlocked so progress polling is completely non-blocking
         wav, sr, _spec = tts.infer(**infer_kwargs)
-
         if wav is None:
             raise RuntimeError("F5-TTS returned no audio.")
 
         wav_arr = np.asarray(wav, dtype=np.float32).flatten()
-        # Cleanly trim any leading silence buffer while retaining a smooth 50ms speech onset
         peak_val = float(np.max(np.abs(wav_arr))) if len(wav_arr) > 0 else 1.0
         thresh = max(0.015 * peak_val, 1e-4)
         non_silent = np.where(np.abs(wav_arr) > thresh)[0]
@@ -268,6 +253,8 @@ class VoiceCloningEngine:
         pitch: float = 0.0,
         temperature: float = 0.7,
         seed: Optional[int] = None,
+        mode: str = "draft",
+        wer_threshold: float = 0.08,
     ) -> Dict[str, Any]:
         if not target_text or not target_text.strip():
             raise ValueError("Target text is empty.")
@@ -283,68 +270,185 @@ class VoiceCloningEngine:
         with self._progress_lock:
             self._active_task_id = task_id
 
-        self._update_progress(6, "Analyzing speaker reference voice & acoustic timbre...", 0.0, task_id=task_id)
+        # Determine ODE steps based on mode: draft (10 steps) vs final (18 steps)
+        if mode == "final":
+            nfe_step = 18
+        else:
+            nfe_step = 10
 
-        # Background progress stepper while flow-matching ODE runs on CPU
-        stop_event = threading.Event()
+        # Step 1: Normalize text input (numbers, currency, dates, abbreviations)
+        self._update_progress(5, "Step 1/5: Normalizing text phonetics and dates/numbers...", 0.0, task_id=task_id)
+        norm_text = normalize_text_input(target_text)
+        chunks = split_into_chunks(norm_text, max_words_per_chunk=25)
+        if not chunks:
+            chunks = [norm_text]
 
-        def _ode_ticker():
-            ode_start = time.time()
-            while not stop_event.wait(0.25):
-                if self._active_task_id != task_id:
-                    break
-                el = time.time() - ode_start
-                # Smooth multi-step progression: advances monotonically from 10% to 85%
-                p = min(85, int(10 + 75 * (1.0 - math.exp(-el / 12.0))))
-                stage = (
-                    "Step 1/5: Analyzing acoustic timbre & phonetics..." if p < 18
-                    else f"Step 2/5: Solving flow-matching ODE on CPU ({p}%)..." if p < 75
-                    else "Step 3/5: Synthesizing neural mel spectrogram..."
-                )
-                self._update_progress(p, stage, time.time() - start_time, task_id=task_id)
+        num_chunks = len(chunks)
+        sr = 24000
+        verified_chunk_audios: List[np.ndarray] = []
+        chunk_metrics: List[Dict[str, Any]] = []
 
-        ticker = threading.Thread(target=_ode_ticker, daemon=True)
-        ticker.start()
+        # Background verifier helper
+        def _verify_audio(audio: np.ndarray, expected_text: str) -> Tuple[float, str]:
+            res = AudioProcessor.transcribe_audio(audio, sr=24000)
+            rec_text = res["transcript"]
+            wer_stat = compute_wer(expected_text, rec_text)
+            return wer_stat["wer"], rec_text
+
+        # Pipelined execution: verify chunk N in background while chunk N+1 is generating
+        verifier_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        prev_verification_future: Optional[concurrent.futures.Future] = None
+        pending_chunk_idx: Optional[int] = None
+        pending_audio: Optional[np.ndarray] = None
+        pending_seed: Optional[int] = None
+        pending_retries: int = 0
+        base_seed = seed if seed is not None else 42
 
         try:
-            wav, sr = self._infer(
-                ref_audio_path, ref_transcript, target_text, speech_speed, temperature, seed
-            )
-        except Exception as exc:
-            self._update_progress(0, f"Inference failed: {exc}", time.time() - start_time, task_id=task_id)
-            raise
+            for idx, chunk_str in enumerate(chunks):
+                chunk_pct = int(10 + 75 * (idx / num_chunks))
+                self._update_progress(
+                    chunk_pct,
+                    f"Step 2/5: Synthesizing chunk {idx + 1}/{num_chunks} ('{chunk_str[:28]}...')...",
+                    time.time() - start_time,
+                    task_id=task_id
+                )
+
+                # Generate current chunk attempt 0
+                cur_seed = base_seed + idx * 101
+                chunk_wav, sr = self._infer_chunk(
+                    ref_audio_path=ref_audio_path,
+                    ref_transcript=ref_transcript,
+                    chunk_text=chunk_str,
+                    speech_speed=speech_speed,
+                    temperature=temperature,
+                    seed=cur_seed,
+                    nfe_step=nfe_step,
+                )
+
+                # Check previously pipelined chunk verification
+                if prev_verification_future is not None and pending_chunk_idx is not None:
+                    p_wer, p_rec = prev_verification_future.result()
+                    p_text = chunks[pending_chunk_idx]
+                    best_audio = pending_audio
+                    best_wer = p_wer
+                    best_rec = p_rec
+                    retries = 0
+
+                    # Completeness gate: if WER > threshold, retry up to 4 tries
+                    while best_wer > wer_threshold and retries < 3:
+                        retries += 1
+                        retry_seed = (pending_seed or base_seed) + retries * 7919
+                        retry_wav, _ = self._infer_chunk(
+                            ref_audio_path=ref_audio_path,
+                            ref_transcript=ref_transcript,
+                            chunk_text=p_text,
+                            speech_speed=speech_speed,
+                            temperature=temperature,
+                            seed=retry_seed,
+                            nfe_step=nfe_step,
+                        )
+                        r_wer, r_rec = _verify_audio(retry_wav, p_text)
+                        if r_wer < best_wer:
+                            best_wer = r_wer
+                            best_rec = r_rec
+                            best_audio = retry_wav
+                        if best_wer <= wer_threshold:
+                            break
+
+                    verified_chunk_audios.append(best_audio)
+                    chunk_metrics.append({
+                        "chunk_index": pending_chunk_idx,
+                        "text": p_text,
+                        "wer": round(best_wer, 4),
+                        "retries": retries,
+                        "status": "passed" if best_wer <= wer_threshold else "fallback_best",
+                        "recognized": best_rec
+                    })
+
+                # Pipeline verification of the current chunk
+                pending_chunk_idx = idx
+                pending_audio = chunk_wav
+                pending_seed = cur_seed
+                pending_retries = 0
+                prev_verification_future = verifier_executor.submit(_verify_audio, chunk_wav, chunk_str)
+
+            # Resolve the final pending chunk
+            if prev_verification_future is not None and pending_chunk_idx is not None:
+                p_wer, p_rec = prev_verification_future.result()
+                p_text = chunks[pending_chunk_idx]
+                best_audio = pending_audio
+                best_wer = p_wer
+                best_rec = p_rec
+                retries = 0
+
+                while best_wer > wer_threshold and retries < 3:
+                    retries += 1
+                    retry_seed = (pending_seed or base_seed) + retries * 7919
+                    retry_wav, _ = self._infer_chunk(
+                        ref_audio_path=ref_audio_path,
+                        ref_transcript=ref_transcript,
+                        chunk_text=p_text,
+                        speech_speed=speech_speed,
+                        temperature=temperature,
+                        seed=retry_seed,
+                        nfe_step=nfe_step,
+                    )
+                    r_wer, r_rec = _verify_audio(retry_wav, p_text)
+                    if r_wer < best_wer:
+                        best_wer = r_wer
+                        best_rec = r_rec
+                        best_audio = retry_wav
+                    if best_wer <= wer_threshold:
+                        break
+
+                verified_chunk_audios.append(best_audio)
+                chunk_metrics.append({
+                    "chunk_index": pending_chunk_idx,
+                    "text": p_text,
+                    "wer": round(best_wer, 4),
+                    "retries": retries,
+                    "status": "passed" if best_wer <= wer_threshold else "fallback_best",
+                    "recognized": best_rec
+                })
+
         finally:
-            stop_event.set()
-            ticker.join(timeout=1.0)
+            verifier_executor.shutdown(wait=False)
 
-        if wav.size == 0:
-            self._update_progress(0, "F5-TTS produced an empty waveform.", time.time() - start_time, task_id=task_id)
-            raise RuntimeError("F5-TTS produced an empty waveform.")
+        # Concatenate verified chunks with smooth cross-fade
+        self._update_progress(88, "Step 3/5: Concatenating verified audio chunks...", time.time() - start_time, task_id=task_id)
+        final_wav = concat_chunks_with_crossfade(verified_chunk_audios, sr=sr, crossfade_ms=50)
 
-        self._update_progress(88, "Step 4/5: Decoding 24 kHz waveform with Vocos neural vocoder...", time.time() - start_time, task_id=task_id)
-        wav = self._pitch_shift(wav, sr, pitch)
-        peak = float(np.max(np.abs(wav)))
+        # Apply pitch shift if specified
+        if abs(pitch) > 1e-3:
+            final_wav = self._pitch_shift(final_wav, sr, pitch)
+
+        peak = float(np.max(np.abs(final_wav))) if len(final_wav) > 0 else 1.0
         if peak > 0.99:
-            wav = wav / peak * 0.95
+            final_wav = final_wav / peak * 0.95
 
-        self._update_progress(93, "Step 4/5: Writing lossless WAV audio file...", time.time() - start_time, task_id=task_id)
+        self._update_progress(92, "Step 4/5: Writing lossless WAV audio file...", time.time() - start_time, task_id=task_id)
         output_filename = f"gen_{uuid.uuid4().hex[:10]}.wav"
         output_path = OUTPUTS_DIR / output_filename
-        sf.write(str(output_path), wav, sr, subtype="PCM_16")
+        sf.write(str(output_path), final_wav, sr, subtype="PCM_16")
 
         inference_time = round(time.time() - start_time, 2)
         peak_cpu = round(psutil.cpu_percent(interval=None), 1)
         peak_ram = round(max(start_rss, proc.memory_info().rss) / (1024**2), 1)
 
-        # Step 5: Fast acoustic metrics and speaker similarity evaluation
-        self._update_progress(97, "Step 5/5: Auditing acoustic speaker similarity & clarity...", time.time() - start_time, task_id=task_id)
+        # Step 5: Honest metrics evaluation (ECAPA-TDNN cosine speaker similarity & RTF)
+        self._update_progress(96, "Step 5/5: Computing ECAPA-TDNN speaker similarity & RTF...", time.time() - start_time, task_id=task_id)
         out_meta = AudioProcessor.inspect_audio(output_path)
         speaker_sim = round(compute_speaker_similarity(str(ref_audio_path), str(output_path)), 4)
-        
-        # Quick non-blocking transcript verification (accurate text adherence)
-        recognized = target_text
-        wer = 0.0
-        cer = 0.0
+
+        duration = max(0.01, out_meta["duration_seconds"])
+        rtf = round(inference_time / duration, 2)
+
+        # Calculate overall WER across the combined recognized chunks
+        all_recognized = " ".join(c.get("recognized", "") for c in chunk_metrics).strip()
+        overall_wer_res = compute_wer(norm_text, all_recognized)
+        overall_cer_res = compute_cer(norm_text, all_recognized)
+        total_retries = sum(c.get("retries", 0) for c in chunk_metrics)
 
         self._update_progress(100, "Speech synthesis complete! Ready for playback.", inference_time, task_id=task_id)
 
@@ -359,15 +463,18 @@ class VoiceCloningEngine:
             "clipping_detected": out_meta["clipping_detected"],
             "snr_estimate": out_meta["snr_estimate"],
             "silence_ratio": out_meta["silence_ratio"],
-            "wer": wer,
-            "cer": cer,
-            "recognized_transcript": recognized,
+            "wer": overall_wer_res["wer"],
+            "cer": overall_cer_res["cer"],
+            "recognized_transcript": all_recognized,
             "speaker_similarity": speaker_sim,
+            "rtf": rtf,
+            "chunk_metrics": chunk_metrics,
+            "total_retries": total_retries,
             "inference_time_seconds": inference_time,
             "cpu_peak": peak_cpu,
             "ram_peak_mb": peak_ram,
         }
 
 
-# Global engine instance (model weights are loaded lazily on first use / load())
+# Global engine instance
 voice_cloning_engine = VoiceCloningEngine()
