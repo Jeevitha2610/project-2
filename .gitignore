@@ -26,6 +26,10 @@ data/references/*
 !data/references/.gitkeep
 data/generated/*
 !data/generated/.gitkeep
+data/outputs/*
+!data/outputs/.gitkeep
+data/database/*
+!data/database/.gitkeep
 data/studio.db*
 data/*.db
 data/*.db-wal
