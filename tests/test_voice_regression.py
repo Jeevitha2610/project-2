@@ -35,17 +35,18 @@ REGRESSION_SENTENCES = [
 ]
 
 
-def test_reference_clips_exist_and_valid():
+def test_reference_clips_exist_and_valid(tmp_path):
     """Verify all 3 reference clips exist and are processed to clean mono 24kHz with proper duration."""
-    for clip_path in REFERENCE_CLIPS:
+    for i, clip_path in enumerate(REFERENCE_CLIPS):
         assert clip_path.exists(), f"Reference clip not found: {clip_path}"
         raw_info = AudioProcessor.inspect_audio(clip_path)
         assert raw_info["duration_seconds"] >= 3.0, f"Clip duration too short: {raw_info['duration_seconds']}s"
 
         # Verify AudioProcessor pipeline transforms the reference to mono 24kHz, trimmed and normalized
-        processed = AudioProcessor.process_reference_audio(clip_path)
-        assert Path(processed["audio_path"]).exists()
-        proc_info = AudioProcessor.inspect_audio(processed["audio_path"])
+        out_clip = tmp_path / f"processed_ref_{i}.wav"
+        processed = AudioProcessor.process_reference_audio(clip_path, out_clip)
+        assert Path(processed["output_path"]).exists()
+        proc_info = AudioProcessor.inspect_audio(processed["output_path"])
         assert proc_info["channels"] == 1, f"Expected mono audio for {clip_path.name}"
         assert proc_info["sample_rate"] == 24000, f"Expected 24000 Hz sample rate for {clip_path.name}"
         assert 4.0 <= proc_info["duration_seconds"] <= 20.0, f"Clip duration out of range: {proc_info['duration_seconds']}s"
