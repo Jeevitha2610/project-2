@@ -1,17 +1,16 @@
-import { useState, useRef } from 'react';
-import type { ChangeEvent, FC } from 'react';
-import { 
-  Play, 
-  Pause, 
-  Trash2, 
-  Download, 
-  Share2, 
-  Volume2, 
-  Layers, 
-  Cpu, 
-  FileText, 
-  Save, 
-  Settings, 
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  Play,
+  Pause,
+  Trash2,
+  Download,
+  Share2,
+  Volume2,
+  Layers,
+  Cpu,
+  FileText,
+  Save,
+  Settings,
   ChevronDown,
   Upload
 } from 'lucide-react';
@@ -27,7 +26,7 @@ interface StudioPageProps {
   systemMetrics: SystemMetrics | null;
 }
 
-export const StudioPage: FC<StudioPageProps> = ({
+export const StudioPage: React.FC<StudioPageProps> = ({
   profiles,
   selectedProfile,
   setSelectedProfile,
@@ -55,14 +54,14 @@ export const StudioPage: FC<StudioPageProps> = ({
   const [isRefPlaying, setIsRefPlaying] = useState(false);
   const refAudioRef = useRef<HTMLAudioElement | null>(null);
 
-  // Update transcript when selected profile changes (state adjusted during render, no effect needed)
-  const [transcriptProfile, setTranscriptProfile] = useState<VoiceProfile | null>(null);
-  if (selectedProfile !== transcriptProfile) {
-    setTranscriptProfile(selectedProfile);
+  // Update transcript when selected profile changes or auto-select first profile
+  useEffect(() => {
     if (selectedProfile) {
       setReferenceTranscript(selectedProfile.reference_transcript);
+    } else if (profiles && profiles.length > 0) {
+      setSelectedProfile(profiles[0]);
     }
-  }
+  }, [selectedProfile, profiles, setSelectedProfile]);
 
   const handleGenerate = async () => {
     if (!targetText.trim()) return;
@@ -104,7 +103,11 @@ export const StudioPage: FC<StudioPageProps> = ({
       clearInterval(pollInterval);
       setProgressPercent(0);
       setProgressStage('');
-      alert(`Generation failed: ${err.response?.data?.detail || err.message}`);
+      const detailMsg = err.response?.data?.detail;
+      const errorMsg = detailMsg || (err.message === 'Network Error'
+        ? 'Cannot reach backend server at http://127.0.0.1:8000. Please ensure the backend server is running.'
+        : err.message);
+      alert(`Generation failed: ${errorMsg}`);
     } finally {
       clearInterval(pollInterval);
       setTimeout(() => {
@@ -113,7 +116,7 @@ export const StudioPage: FC<StudioPageProps> = ({
     }
   };
 
-  const handleReferenceUpload = async (e: ChangeEvent<HTMLInputElement>) => {
+  const handleReferenceUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
@@ -156,7 +159,7 @@ export const StudioPage: FC<StudioPageProps> = ({
     <div className="px-9 py-6 max-w-[1360px] mx-auto space-y-6 relative select-none">
       {/* Hidden audio players */}
       {lastJob?.output_audio_url && (
-        <audio 
+        <audio
           ref={audioRef}
           src={`http://127.0.0.1:8000${lastJob.output_audio_url}`}
           onTimeUpdate={() => setAudioCurrentTime(audioRef.current?.currentTime || 0)}
@@ -164,7 +167,7 @@ export const StudioPage: FC<StudioPageProps> = ({
         />
       )}
       {selectedProfile?.reference_audio_url && (
-        <audio 
+        <audio
           ref={refAudioRef}
           src={`http://127.0.0.1:8000${selectedProfile.reference_audio_url}`}
           onEnded={() => setIsRefPlaying(false)}
@@ -192,9 +195,9 @@ export const StudioPage: FC<StudioPageProps> = ({
         <div className="col-span-12 lg:col-span-9 space-y-5">
           <div className="grid grid-cols-12 gap-5">
             {/* Panel 1: Reference Voice (Col 1-6) */}
-            <div 
+            <div
               className="col-span-12 md:col-span-6 rounded-2xl p-5 space-y-4 shadow-xl border transition-colors"
-              style={{ 
+              style={{
                 backgroundColor: 'var(--bg-card)',
                 borderColor: 'var(--border-card)'
               }}
@@ -216,15 +219,15 @@ export const StudioPage: FC<StudioPageProps> = ({
               </div>
 
               {/* Reference Audio Player Pill matching Image 1 */}
-              <div 
+              <div
                 className="rounded-xl p-3 flex items-center justify-between border transition-colors"
-                style={{ 
+                style={{
                   backgroundColor: 'var(--bg-card-inner)',
                   borderColor: 'var(--border-inner)'
                 }}
               >
                 <div className="flex items-center gap-3">
-                  <button 
+                  <button
                     onClick={toggleRefPlay}
                     className="w-8 h-8 rounded-full bg-[#2563eb] hover:bg-blue-500 active:scale-90 flex items-center justify-center text-white shadow-md shadow-blue-600/40 transition-all shrink-0 cursor-pointer"
                   >
@@ -237,15 +240,14 @@ export const StudioPage: FC<StudioPageProps> = ({
                     {/* Animated Audio Equalizer Bars matching Image 1 */}
                     <div className="flex items-center gap-0.5 mt-1 h-3.5">
                       {[10, 18, 14, 24, 16, 12, 22, 14, 20, 10, 16, 22, 12, 18, 14, 8, 14, 20].map((h, i) => (
-                        <div 
-                          key={i} 
-                          className={`w-[2.5px] rounded-full transition-all ${
-                            isRefPlaying ? 'bg-cyan-400 animate-wave-bar' : 'bg-blue-400'
-                          }`}
-                          style={{ 
+                        <div
+                          key={i}
+                          className={`w-[2.5px] rounded-full transition-all ${isRefPlaying ? 'bg-cyan-400 animate-wave-bar' : 'bg-blue-400'
+                            }`}
+                          style={{
                             height: `${h * 0.55}px`,
                             animationDelay: `${(i % 5) * 0.1}s`
-                          }} 
+                          }}
                         />
                       ))}
                     </div>
@@ -255,7 +257,7 @@ export const StudioPage: FC<StudioPageProps> = ({
                   <span className="text-[11px] font-mono" style={{ color: 'var(--text-secondary)' }}>
                     {selectedProfile ? `00:0${Math.round(selectedProfile.duration_seconds)}` : '00:12'}
                   </span>
-                  <button 
+                  <button
                     title="Remove Audio"
                     className="text-slate-400 hover:text-rose-400 transition-colors p-1"
                   >
@@ -275,7 +277,7 @@ export const StudioPage: FC<StudioPageProps> = ({
                   maxLength={500}
                   rows={4}
                   className="w-full rounded-xl p-3 text-xs focus:outline-none focus:border-purple-500 transition-colors resize-none font-sans leading-relaxed border"
-                  style={{ 
+                  style={{
                     backgroundColor: 'var(--bg-card-inner)',
                     borderColor: 'var(--border-inner)',
                     color: 'var(--text-primary)'
@@ -289,9 +291,9 @@ export const StudioPage: FC<StudioPageProps> = ({
             </div>
 
             {/* Panel 2: Generate Speech (Col 7-12) */}
-            <div 
+            <div
               className="col-span-12 md:col-span-6 rounded-2xl p-5 space-y-4 shadow-xl border transition-colors"
-              style={{ 
+              style={{
                 backgroundColor: 'var(--bg-card)',
                 borderColor: 'var(--border-card)'
               }}
@@ -316,7 +318,7 @@ export const StudioPage: FC<StudioPageProps> = ({
                   maxLength={500}
                   rows={3}
                   className="w-full rounded-xl p-3 text-xs focus:outline-none focus:border-purple-500 transition-colors resize-none font-sans leading-relaxed border"
-                  style={{ 
+                  style={{
                     backgroundColor: 'var(--bg-card-inner)',
                     borderColor: 'var(--border-inner)',
                     color: 'var(--text-primary)'
@@ -333,10 +335,10 @@ export const StudioPage: FC<StudioPageProps> = ({
                 {/* Speech Speed */}
                 <div className="flex items-center justify-between gap-3 text-xs">
                   <span className="font-medium w-24" style={{ color: 'var(--text-primary)' }}>Speech Speed</span>
-                  <input 
-                    type="range" 
-                    min="0.5" 
-                    max="2.0" 
+                  <input
+                    type="range"
+                    min="0.5"
+                    max="2.0"
                     step="0.1"
                     value={speechSpeed}
                     onChange={(e) => setSpeechSpeed(parseFloat(e.target.value))}
@@ -345,9 +347,9 @@ export const StudioPage: FC<StudioPageProps> = ({
                       background: `linear-gradient(to right, #06b6d4 0%, #3b82f6 ${((speechSpeed - 0.5) / 1.5) * 100}%, #1e2440 ${((speechSpeed - 0.5) / 1.5) * 100}%, #1e2440 100%)`
                     }}
                   />
-                  <div 
+                  <div
                     className="px-2.5 py-1 rounded-lg font-mono text-[11px] min-w-[42px] text-center border font-semibold"
-                    style={{ 
+                    style={{
                       backgroundColor: 'var(--bg-card-inner)',
                       borderColor: 'var(--border-inner)',
                       color: 'var(--text-primary)'
@@ -360,10 +362,10 @@ export const StudioPage: FC<StudioPageProps> = ({
                 {/* Pitch */}
                 <div className="flex items-center justify-between gap-3 text-xs">
                   <span className="font-medium w-24" style={{ color: 'var(--text-primary)' }}>Pitch</span>
-                  <input 
-                    type="range" 
-                    min="-5.0" 
-                    max="5.0" 
+                  <input
+                    type="range"
+                    min="-5.0"
+                    max="5.0"
                     step="0.5"
                     value={pitch}
                     onChange={(e) => setPitch(parseFloat(e.target.value))}
@@ -372,9 +374,9 @@ export const StudioPage: FC<StudioPageProps> = ({
                       background: `linear-gradient(to right, #8b5cf6 0%, #ec4899 ${((pitch + 5.0) / 10.0) * 100}%, #1e2440 ${((pitch + 5.0) / 10.0) * 100}%, #1e2440 100%)`
                     }}
                   />
-                  <div 
+                  <div
                     className="px-2.5 py-1 rounded-lg font-mono text-[11px] min-w-[42px] text-center border font-semibold"
-                    style={{ 
+                    style={{
                       backgroundColor: 'var(--bg-card-inner)',
                       borderColor: 'var(--border-inner)',
                       color: 'var(--text-primary)'
@@ -387,10 +389,10 @@ export const StudioPage: FC<StudioPageProps> = ({
                 {/* Temperature */}
                 <div className="flex items-center justify-between gap-3 text-xs">
                   <span className="font-medium w-24" style={{ color: 'var(--text-primary)' }}>Temperature</span>
-                  <input 
-                    type="range" 
-                    min="0.1" 
-                    max="1.5" 
+                  <input
+                    type="range"
+                    min="0.1"
+                    max="1.5"
                     step="0.05"
                     value={temperature}
                     onChange={(e) => setTemperature(parseFloat(e.target.value))}
@@ -399,9 +401,9 @@ export const StudioPage: FC<StudioPageProps> = ({
                       background: `linear-gradient(to right, #06b6d4 0%, #6366f1 ${((temperature - 0.1) / 1.4) * 100}%, #1e2440 ${((temperature - 0.1) / 1.4) * 100}%, #1e2440 100%)`
                     }}
                   />
-                  <div 
+                  <div
                     className="px-2.5 py-1 rounded-lg font-mono text-[11px] min-w-[42px] text-center border font-semibold"
-                    style={{ 
+                    style={{
                       backgroundColor: 'var(--bg-card-inner)',
                       borderColor: 'var(--border-inner)',
                       color: 'var(--text-primary)'
@@ -493,9 +495,9 @@ export const StudioPage: FC<StudioPageProps> = ({
         {/* Right Side: Voice Profile, Model & Output Settings (Col 10-12) */}
         <div className="col-span-12 lg:col-span-3 space-y-4">
           {/* Card 1: Voice Profile matching Image 1 */}
-          <div 
+          <div
             className="rounded-2xl p-4 space-y-3 shadow-xl border transition-colors"
-            style={{ 
+            style={{
               backgroundColor: 'var(--bg-card)',
               borderColor: 'var(--border-card)'
             }}
@@ -512,7 +514,7 @@ export const StudioPage: FC<StudioPageProps> = ({
                   if (p) setSelectedProfile(p);
                 }}
                 className="w-full rounded-xl px-3.5 py-2.5 text-xs font-medium focus:outline-none focus:border-purple-500 appearance-none pr-8 cursor-pointer border transition-colors"
-                style={{ 
+                style={{
                   backgroundColor: 'var(--bg-card-inner)',
                   borderColor: 'var(--border-inner)',
                   color: 'var(--text-primary)'
@@ -526,17 +528,17 @@ export const StudioPage: FC<StudioPageProps> = ({
             </div>
 
             <div className="grid grid-cols-2 gap-2 pt-0.5">
-              <button 
+              <button
                 onClick={() => alert("Voice profile saved to local SQLite database.")}
                 className="px-3 py-2 bg-[#2d1b69] hover:bg-[#3b248a] active:scale-95 text-purple-200 border border-purple-500/40 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
               >
                 <Save className="w-3.5 h-3.5 text-purple-300" />
                 Save Profile
               </button>
-              <button 
+              <button
                 onClick={() => alert("Profile management opened.")}
                 className="px-3 py-2 active:scale-95 text-slate-300 border rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
-                style={{ 
+                style={{
                   backgroundColor: 'var(--bg-card-inner)',
                   borderColor: 'var(--border-inner)'
                 }}
@@ -548,9 +550,9 @@ export const StudioPage: FC<StudioPageProps> = ({
           </div>
 
           {/* Card 2: Model matching Image 1 */}
-          <div 
+          <div
             className="rounded-2xl p-4 space-y-3 shadow-xl border transition-colors"
-            style={{ 
+            style={{
               backgroundColor: 'var(--bg-card)',
               borderColor: 'var(--border-card)'
             }}
@@ -560,15 +562,15 @@ export const StudioPage: FC<StudioPageProps> = ({
               <span>Model</span>
             </div>
             <div className="relative">
-              <div 
+              <div
                 className="w-full rounded-xl px-3.5 py-2.5 text-xs font-medium flex items-center justify-between border transition-colors"
-                style={{ 
+                style={{
                   backgroundColor: 'var(--bg-card-inner)',
                   borderColor: 'var(--border-inner)',
                   color: 'var(--text-primary)'
                 }}
               >
-                <span>F5-TTS v1 (English)</span>
+                <span>IndicF5 (English)</span>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#064e3b] text-[#34d399] border border-[#059669]/40 mr-5 flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
                   Loaded
@@ -579,9 +581,9 @@ export const StudioPage: FC<StudioPageProps> = ({
           </div>
 
           {/* Card 3: Output Format matching Image 1 */}
-          <div 
+          <div
             className="rounded-2xl p-4 space-y-3 shadow-xl border transition-colors"
-            style={{ 
+            style={{
               backgroundColor: 'var(--bg-card)',
               borderColor: 'var(--border-card)'
             }}
@@ -595,7 +597,7 @@ export const StudioPage: FC<StudioPageProps> = ({
                 value={outputFormat}
                 onChange={(e) => setOutputFormat(e.target.value)}
                 className="w-full rounded-xl px-3.5 py-2.5 text-xs font-medium focus:outline-none focus:border-purple-500 appearance-none pr-8 cursor-pointer border transition-colors"
-                style={{ 
+                style={{
                   backgroundColor: 'var(--bg-card-inner)',
                   borderColor: 'var(--border-inner)',
                   color: 'var(--text-primary)'
@@ -612,9 +614,9 @@ export const StudioPage: FC<StudioPageProps> = ({
       </div>
 
       {/* Bottom Section: Output & Evaluation matching Image 1 */}
-      <div 
+      <div
         className="rounded-2xl p-5 shadow-2xl space-y-3 border transition-colors"
-        style={{ 
+        style={{
           backgroundColor: 'var(--bg-card)',
           borderColor: 'var(--border-card)'
         }}
@@ -628,9 +630,9 @@ export const StudioPage: FC<StudioPageProps> = ({
 
         <div className="grid grid-cols-12 gap-5 items-center">
           {/* Left Player Box matching Image 1 */}
-          <div 
+          <div
             className="col-span-12 lg:col-span-7 rounded-2xl p-4 flex items-center gap-4 border transition-colors"
-            style={{ 
+            style={{
               backgroundColor: 'var(--bg-card-inner)',
               borderColor: 'var(--border-inner)'
             }}
@@ -648,14 +650,13 @@ export const StudioPage: FC<StudioPageProps> = ({
               {[8, 16, 24, 38, 20, 48, 65, 80, 50, 62, 78, 92, 85, 70, 55, 35, 45, 60, 75, 52, 38, 22, 34, 48, 62, 42, 28, 16, 28, 45, 32, 18, 10, 22, 35, 48, 30, 16].map((h, i) => (
                 <div
                   key={i}
-                  className={`flex-1 rounded-full transition-all ${
-                    lastJob
-                      ? i < (audioCurrentTime / (lastJob.duration_seconds || 1)) * 38
-                        ? isPlaying ? 'bg-purple-300 animate-wave-bar' : 'bg-purple-300'
-                        : 'bg-[#6366f1]/70'
-                      : 'bg-slate-600/40'
-                  }`}
-                  style={{ 
+                  className={`flex-1 rounded-full transition-all ${lastJob
+                    ? i < (audioCurrentTime / (lastJob.duration_seconds || 1)) * 38
+                      ? isPlaying ? 'bg-purple-300 animate-wave-bar' : 'bg-purple-300'
+                      : 'bg-[#6366f1]/70'
+                    : 'bg-slate-600/40'
+                    }`}
+                  style={{
                     height: `${h}%`,
                     animationDelay: `${(i % 6) * 0.08}s`
                   }}
@@ -681,8 +682,8 @@ export const StudioPage: FC<StudioPageProps> = ({
                   <Download className="w-4 h-4" />
                 </a>
               )}
-              <button 
-                title="Share" 
+              <button
+                title="Share"
                 onClick={() => alert("Audio link copied to clipboard.")}
                 className="hover:text-white transition-colors p-1 cursor-pointer"
               >
@@ -692,9 +693,9 @@ export const StudioPage: FC<StudioPageProps> = ({
           </div>
 
           {/* Right: Evaluation (Auto) 4 Stat Cards matching Image 1 */}
-          <div 
+          <div
             className="col-span-12 lg:col-span-5 rounded-2xl p-3.5 space-y-2 border transition-colors"
-            style={{ 
+            style={{
               backgroundColor: 'var(--bg-card-inner)',
               borderColor: 'var(--border-inner)'
             }}
@@ -706,15 +707,15 @@ export const StudioPage: FC<StudioPageProps> = ({
 
             <div className="grid grid-cols-4 gap-2 text-center">
               {/* Text Accuracy (WER) */}
-              <div 
+              <div
                 className="rounded-xl p-2.5 border transition-colors"
-                style={{ 
+                style={{
                   backgroundColor: 'var(--bg-card)',
                   borderColor: 'var(--border-card)'
                 }}
               >
                 <div className="text-[10px] font-medium leading-tight" style={{ color: 'var(--text-secondary)' }}>
-                  Text Accuracy<br/>(WER)
+                  Text Accuracy<br />(WER)
                 </div>
                 <div className="text-lg font-extrabold text-[#00e676] mt-1 font-mono">
                   {lastJob ? `${(lastJob.wer * 100).toFixed(1)}%` : '0.0%'}
@@ -722,15 +723,15 @@ export const StudioPage: FC<StudioPageProps> = ({
               </div>
 
               {/* Character Error Rate (CER) */}
-              <div 
+              <div
                 className="rounded-xl p-2.5 border transition-colors"
-                style={{ 
+                style={{
                   backgroundColor: 'var(--bg-card)',
                   borderColor: 'var(--border-card)'
                 }}
               >
                 <div className="text-[10px] font-medium leading-tight" style={{ color: 'var(--text-secondary)' }}>
-                  Character Error<br/>Rate (CER)
+                  Character Error<br />Rate (CER)
                 </div>
                 <div className="text-lg font-extrabold text-[#00e676] mt-1 font-mono">
                   {lastJob ? `${(lastJob.cer * 100).toFixed(1)}%` : '0.0%'}
@@ -738,15 +739,15 @@ export const StudioPage: FC<StudioPageProps> = ({
               </div>
 
               {/* Speaker Similarity */}
-              <div 
+              <div
                 className="rounded-xl p-2.5 border transition-colors"
-                style={{ 
+                style={{
                   backgroundColor: 'var(--bg-card)',
                   borderColor: 'var(--border-card)'
                 }}
               >
                 <div className="text-[10px] font-medium leading-tight" style={{ color: 'var(--text-secondary)' }}>
-                  Speaker<br/>Similarity
+                  Speaker<br />Similarity
                 </div>
                 <div className="text-lg font-extrabold text-[#00e676] mt-1 font-mono">
                   {lastJob ? `${(lastJob.speaker_similarity * 100).toFixed(1)}%` : '98.5%'}
@@ -754,15 +755,15 @@ export const StudioPage: FC<StudioPageProps> = ({
               </div>
 
               {/* Audio Duration */}
-              <div 
+              <div
                 className="rounded-xl p-2.5 border transition-colors"
-                style={{ 
+                style={{
                   backgroundColor: 'var(--bg-card)',
                   borderColor: 'var(--border-card)'
                 }}
               >
                 <div className="text-[10px] font-medium leading-tight" style={{ color: 'var(--text-secondary)' }}>
-                  Audio<br/>Duration
+                  Audio<br />Duration
                 </div>
                 <div className="text-lg font-extrabold mt-1 font-mono" style={{ color: 'var(--text-primary)' }}>
                   {lastJob ? `${lastJob.duration_seconds.toFixed(1)} s` : '6.0 s'}

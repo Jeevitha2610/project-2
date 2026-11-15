@@ -7,8 +7,8 @@ class ModelSettings(BaseModel):
     model_id: str = "F5TTS_v1_Base"
     device: str = "cpu"
     sample_rate: int = 24000
-    # Flow-matching ODE steps: 32 = official default quality (slower on CPU)
-    nfe_step: int = 32
+    # Flow-matching ODE steps: 20 offers the optimal balance of high fidelity and fast CPU synthesis
+    nfe_step: int = 20
     # Local ASR used only to verify text adherence (real WER/CER)
     asr_model_id: str = "openai/whisper-base.en"
     max_text_chars: int = 500

@@ -143,8 +143,10 @@ class VoiceCloningEngine:
     def transcribe(self, audio: np.ndarray, sr: int) -> Optional[str]:
         """Independent ASR transcript of ``audio``; ``None`` if ASR is unavailable."""
         try:
+            if audio.ndim > 1:
+                audio = np.mean(audio, axis=-1 if audio.shape[-1] <= 2 else 0)
             asr = self._get_asr()
-            result = asr({"raw": audio.astype(np.float32), "sampling_rate": sr})
+            result = asr({"raw": audio.astype(np.float32).flatten(), "sampling_rate": sr})
             text = result.get("text", "") if isinstance(result, dict) else ""
             return str(text).strip()
         except Exception as exc:  # noqa: BLE001
