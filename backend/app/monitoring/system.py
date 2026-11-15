@@ -19,7 +19,7 @@ class SystemMonitor:
             "ram_percent": round(mem.percent, 1),
             "disk_free_gb": round(disk.free / (1024 ** 3), 1),
             "device": "CPU (Intel Core)",
-            "model_name": "IndicF5 (English)",
+            "model_name": "F5-TTS v1 (English)",
             "model_status": "Loaded",
             "queue_length": 0
         }

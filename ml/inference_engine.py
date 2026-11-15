@@ -1,24 +1,208 @@
-import os
-import time
-import math
-import uuid
-from pathlib import Path
-from typing import Dict, Any, Optional
-import numpy as np
-import soundfile as sf
-import psutil
+"""Real neural zero-shot English voice cloning on CPU using F5-TTS.
 
-from backend.app.core.config import OUTPUTS_DIR, settings
+Replaces the earlier DSP sine-wave placeholder (which produced an electronic
+buzz rather than speech). The engine:
+
+* loads the official F5-TTS v1 Base model + Vocos vocoder once (lazy, thread-safe),
+* conditions generation on the reference audio + its exact transcript,
+* optionally pitch-shifts the result (post-process, semitones),
+* transcribes the output with a local Whisper ASR model to compute *real* WER/CER,
+* reports measured inference time, CPU and RAM.
+
+No preset-TTS fallback: if the model cannot load, synthesis raises an error.
+"""
+from __future__ import annotations
+
+import gc
+import math
+import threading
+import time
+import uuid
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple
+
+import numpy as np
+import psutil
+import soundfile as sf
+
+try:
+    import static_ffmpeg
+    static_ffmpeg.add_paths()
+except Exception:
+    pass
+
+try:
+    import torch
+    import torchaudio
+
+    def _safe_torchaudio_load(filepath, *args, **kwargs):
+        data, sr = sf.read(filepath, dtype="float32")
+        tensor = torch.from_numpy(data)
+        if tensor.ndim == 1:
+            tensor = tensor.unsqueeze(0)
+        elif tensor.ndim == 2:
+            tensor = tensor.t()
+        return tensor, sr
+
+    torchaudio.load = _safe_torchaudio_load
+except Exception:
+    pass
+
 from backend.app.audio.processor import AudioProcessor
-from backend.app.evaluation.metrics import compute_wer, compute_cer, compute_speaker_similarity
+from backend.app.core.config import OUTPUTS_DIR
+from backend.app.evaluation.metrics import compute_cer, compute_speaker_similarity, compute_wer
 from ml.model_config import default_model_config
 
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from f5_tts.api import F5TTS  # type: ignore[import-not-found, unused-ignore]
+
+
+class ModelNotAvailableError(RuntimeError):
+    """Raised when the neural cloning model cannot be loaded."""
+
+
+def _silent_info(*_args: Any, **_kwargs: Any) -> None:
+    """Swallow F5-TTS's console progress messages."""
+
+
 class VoiceCloningEngine:
-    def __init__(self, model_name: str = "IndicF5 (English)"):
-        self.model_name = model_name
-        self.device = "CPU"
-        self.is_loaded = True
-        self.sample_rate = default_model_config.sample_rate
+    def __init__(self) -> None:
+        cfg = default_model_config
+        self.model_name: str = cfg.model_name
+        self.model_id: str = cfg.model_id
+        self.device: str = "CPU"
+        self.sample_rate: int = cfg.sample_rate
+        self._tts: Optional["F5TTS"] = None
+        self._asr: Optional[Callable[..., Any]] = None
+        self._lock = threading.Lock()
+        self.last_error: Optional[str] = None
+        self.progress: Dict[str, Any] = {
+            "is_running": False,
+            "percent": 0,
+            "stage": "Idle",
+            "elapsed_seconds": 0.0,
+        }
+
+    def get_progress(self) -> Dict[str, Any]:
+        with self._lock:
+            return dict(self.progress)
+
+    def _update_progress(self, percent: int, stage: str, elapsed: float = 0.0) -> None:
+        with self._lock:
+            self.progress["percent"] = min(100, max(0, percent))
+            self.progress["stage"] = stage
+            self.progress["is_running"] = percent < 100
+            if elapsed > 0:
+                self.progress["elapsed_seconds"] = round(elapsed, 1)
+
+    # ------------------------------------------------------------------ loading
+    @property
+    def is_loaded(self) -> bool:
+        return self._tts is not None
+
+    def load(self) -> None:
+        with self._lock:
+            self._load_unlocked()
+
+    def _load_unlocked(self) -> "F5TTS":
+        """Load the model if needed and return it (caller must hold the lock)."""
+        if self._tts is not None:
+            return self._tts
+        try:
+            import torch
+            from f5_tts.api import F5TTS  # type: ignore[import-not-found, unused-ignore]
+
+            torch.set_num_threads(max(1, psutil.cpu_count(logical=False) or 4))
+            tts = F5TTS(model=self.model_id, device="cpu")
+            self.sample_rate = int(getattr(tts, "target_sample_rate", default_model_config.sample_rate))
+            self._tts = tts
+            self.last_error = None
+            return tts
+        except Exception as exc:  # noqa: BLE001 - surface any load failure
+            self.last_error = f"{type(exc).__name__}: {exc}"
+            raise ModelNotAvailableError(
+                f"F5-TTS model could not be loaded: {self.last_error}"
+            ) from exc
+
+    def unload(self) -> None:
+        with self._lock:
+            self._tts = None
+            self._asr = None
+            gc.collect()
+
+    def _get_asr(self) -> Callable[..., Any]:
+        if self._asr is None:
+            from transformers import pipeline  # type: ignore[import-not-found, unused-ignore]
+
+            self._asr = pipeline(
+                "automatic-speech-recognition",
+                model=default_model_config.asr_model_id,
+                device="cpu",
+            )
+        return self._asr
+
+    def transcribe(self, audio: np.ndarray, sr: int) -> Optional[str]:
+        """Independent ASR transcript of ``audio``; ``None`` if ASR is unavailable."""
+        try:
+            asr = self._get_asr()
+            result = asr({"raw": audio.astype(np.float32), "sampling_rate": sr})
+            text = result.get("text", "") if isinstance(result, dict) else ""
+            return str(text).strip()
+        except Exception as exc:  # noqa: BLE001
+            self.last_error = f"ASR failed: {type(exc).__name__}: {exc}"
+            return None
+
+    # --------------------------------------------------------------- synthesis
+    @staticmethod
+    def _pitch_shift(wav: np.ndarray, sr: int, semitones: float) -> np.ndarray:
+        if abs(semitones) < 1e-3:
+            return wav
+        import torch
+        import torchaudio.functional as AF
+
+        t = torch.from_numpy(np.ascontiguousarray(wav, dtype=np.float32)).unsqueeze(0)
+        shifted = AF.pitch_shift(t, sr, n_steps=float(semitones))
+        out: np.ndarray = shifted.squeeze(0).detach().cpu().numpy().astype(np.float32)
+        return out
+
+    @staticmethod
+    def _temperature_to_cfg(temperature: float) -> float:
+        """F5-TTS has no sampling temperature. We map the UI 'temperature' to
+        classifier-free-guidance strength: lower temperature -> stronger guidance
+        (tighter adherence), higher -> looser / more varied. Default 0.7 -> 2.0."""
+        return float(np.clip(2.0 + (0.7 - temperature) * 1.5, 1.0, 3.5))
+
+    def _infer(
+        self,
+        ref_audio_path: str,
+        ref_transcript: str,
+        target_text: str,
+        speech_speed: float,
+        temperature: float,
+        seed: Optional[int],
+    ) -> Tuple[np.ndarray, int]:
+        infer_kwargs: Dict[str, Any] = {
+            "ref_file": str(ref_audio_path),
+            "ref_text": ref_transcript.strip(),
+            "gen_text": target_text.strip(),
+            "show_info": _silent_info,
+            "speed": float(speech_speed),
+            "cfg_strength": self._temperature_to_cfg(temperature),
+            "nfe_step": int(default_model_config.nfe_step),
+            "remove_silence": False,
+        }
+        # Only forward an explicit seed: the "random seed" sentinel differs
+        # between f5-tts releases (None in >=1.0, -1 in older ones), so leaving
+        # it out lets the installed version pick its own default.
+        if seed is not None:
+            infer_kwargs["seed"] = int(seed)
+
+        with self._lock:
+            tts = self._load_unlocked()
+            wav, sr, _spec = tts.infer(**infer_kwargs)
+
+        if wav is None:
+            raise RuntimeError("F5-TTS returned no audio.")
+        return np.asarray(wav, dtype=np.float32).flatten(), int(sr)
 
     def synthesize(
         self,
@@ -28,119 +212,103 @@ class VoiceCloningEngine:
         speech_speed: float = 1.0,
         pitch: float = 0.0,
         temperature: float = 0.7,
-        seed: Optional[int] = None
+        seed: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """
-        Executes reference-conditioned voice cloning inference on CPU.
-        Measures real inference time, peak CPU and peak RAM.
-        """
+        if not target_text or not target_text.strip():
+            raise ValueError("Target text is empty.")
+        if not ref_transcript or not ref_transcript.strip():
+            raise ValueError("Reference transcript is required for accurate cloning.")
+
         start_time = time.time()
-        start_cpu = psutil.cpu_percent(interval=None)
-        start_ram = psutil.virtual_memory().used / (1024 ** 2)
+        proc = psutil.Process()
+        psutil.cpu_percent(interval=None)
+        start_rss = proc.memory_info().rss
 
-        if seed is not None:
-            np.random.seed(seed)
+        self._update_progress(5, "Analyzing speaker reference voice & acoustic timbre...", 0.0)
 
-        # 1. Inspect and extract reference audio properties
-        ref_meta = AudioProcessor.inspect_audio(ref_audio_path)
-        ref_data, ref_sr = sf.read(ref_audio_path)
-        if len(ref_data.shape) > 1:
-            ref_data = np.mean(ref_data, axis=1)
+        # Background progress stepper while ODE runs on CPU
+        stop_event = threading.Event()
 
-        # 2. Extract reference speaker timbre and formant envelope
-        ref_fft = np.abs(np.fft.rfft(ref_data[:min(len(ref_data), 48000)]))
-        timbre_profile = ref_fft[:2048] if len(ref_fft) >= 2048 else np.pad(ref_fft, (0, 2048 - len(ref_fft)))
-        timbre_norm = timbre_profile / (np.max(timbre_profile) + 1e-6)
+        def _ode_ticker():
+            ode_start = time.time()
+            while not stop_event.wait(0.4):
+                el = time.time() - ode_start
+                # Smooth curve: reaches ~40% around 12s, ~70% around 35s, capped at 83%
+                p = min(83, int(18 + 65 * (1.0 - math.exp(-el / 28.0))))
+                with self._lock:
+                    self.progress["percent"] = p
+                    self.progress["stage"] = f"Solving flow-matching ODE on CPU ({p}%)..."
+                    self.progress["is_running"] = True
+                    self.progress["elapsed_seconds"] = round(time.time() - start_time, 1)
 
-        # 3. Reference-conditioned speech synthesis for target text
-        # Calculate duration based on word count and speech speed
-        words = target_text.split()
-        word_count = max(1, len(words))
-        # Natural English conversational pace is ~2.8 words per second (0.35s per word)
-        base_duration = (word_count * 0.36 + 0.4) / speech_speed
-        total_samples = int(base_duration * self.sample_rate)
-        
-        t = np.linspace(0, base_duration, total_samples, endpoint=False)
-        
-        # Base fundamental frequency modulated by reference voice and pitch shift
-        base_f0 = 135.0 + (pitch * 8.0)  # Average natural vocal pitch in Hz
-        # Modulate pitch contour naturally over words
-        pitch_contour = base_f0 * (1.0 + 0.08 * np.sin(2 * np.pi * 1.5 * t) + 0.04 * np.sin(2 * np.pi * 0.5 * t))
-        phase = 2 * np.pi * np.cumsum(pitch_contour) / self.sample_rate
-        
-        # Harmonics conditioned on reference timbre
-        glottal_source = np.zeros(total_samples)
-        for h in range(1, 12):
-            h_weight = float(timbre_norm[min(h * 60, len(timbre_norm) - 1)]) * (1.0 / (h ** 0.6))
-            glottal_source += h_weight * np.sin(h * phase)
-            
-        # Vocal tract filter simulation
-        # Add acoustic consonants/vowels energy envelope shaped by words
-        envelope = np.zeros(total_samples)
-        samples_per_word = total_samples // word_count
-        for i in range(word_count):
-            start = i * samples_per_word
-            end = min(total_samples, start + samples_per_word)
-            word_len = end - start
-            if word_len > 0:
-                # Word amplitude envelope
-                window = np.hanning(word_len)
-                envelope[start:end] = window
+        ticker = threading.Thread(target=_ode_ticker, daemon=True)
+        ticker.start()
 
-        # Smooth envelope and add temperature stochasticity
-        noise = np.random.normal(0, 0.02 * temperature, total_samples)
-        synthesized_signal = (glottal_source * envelope) + (noise * envelope)
-        
-        # Bandpass filter around speech formant range (100 Hz - 4000 Hz)
-        max_val = np.max(np.abs(synthesized_signal))
-        if max_val > 0:
-            synthesized_signal = (synthesized_signal / max_val) * 0.92
+        try:
+            wav, sr = self._infer(
+                ref_audio_path, ref_transcript, target_text, speech_speed, temperature, seed
+            )
+        except Exception as exc:
+            self._update_progress(0, f"Inference failed: {exc}", time.time() - start_time)
+            raise
+        finally:
+            stop_event.set()
+            ticker.join(timeout=1.0)
 
-        # 4. Save generated WAV
+        if wav.size == 0:
+            self._update_progress(0, "F5-TTS produced an empty waveform.", time.time() - start_time)
+            raise RuntimeError("F5-TTS produced an empty waveform.")
+
+        self._update_progress(85, "Synthesizing waveform with Vocos 24kHz neural vocoder...", time.time() - start_time)
+        wav = self._pitch_shift(wav, sr, pitch)
+        peak = float(np.max(np.abs(wav)))
+        if peak > 0.99:
+            wav = wav / peak * 0.95
+
+        self._update_progress(90, "Writing lossless WAV audio file...", time.time() - start_time)
         output_filename = f"gen_{uuid.uuid4().hex[:10]}.wav"
         output_path = OUTPUTS_DIR / output_filename
-        sf.write(str(output_path), synthesized_signal.astype(np.float32), self.sample_rate, subtype="PCM_16")
+        sf.write(str(output_path), wav, sr, subtype="PCM_16")
 
-        # 5. Measure performance metrics
-        end_time = time.time()
-        inference_time = round(end_time - start_time, 2)
-        end_cpu = psutil.cpu_percent(interval=None)
-        peak_cpu = round(max(start_cpu, end_cpu, 15.0), 1)
-        end_ram = psutil.virtual_memory().used / (1024 ** 2)
-        peak_ram = round(max(start_ram, end_ram, 1200.0), 1)
+        inference_time = round(time.time() - start_time, 2)
+        peak_cpu = round(psutil.cpu_percent(interval=None), 1)
+        peak_ram = round(max(start_rss, proc.memory_info().rss) / (1024**2), 1)
 
-        # 6. Evaluate generated audio
+        # Independent evaluation: real ASR transcript of the generated audio.
+        self._update_progress(93, "Evaluating text accuracy (WER/CER) with Whisper ASR...", time.time() - start_time)
         out_meta = AudioProcessor.inspect_audio(output_path)
-        
-        # Exact text adherence: recognized transcript matches the synthesized text with high accuracy
-        # In real test, compare target_text with normalized hypothesis
-        recognized_text = target_text  # Local ASR verification output
-        wer_res = compute_wer(target_text, recognized_text)
-        cer_res = compute_cer(target_text, recognized_text)
-        speaker_sim = compute_speaker_similarity(ref_audio_path, str(output_path))
-        
-        # Ensure realistic high speaker similarity matching reference voice
-        calibrated_similarity = round(max(speaker_sim, 0.95), 3)
+        recognized = self.transcribe(wav, sr)
+        wer: Optional[float] = None
+        cer: Optional[float] = None
+        if recognized is not None:
+            wer = float(compute_wer(target_text, recognized)["wer"])
+            cer = float(compute_cer(target_text, recognized)["cer"])
+
+        self._update_progress(98, "Computing acoustic speaker similarity matrix...", time.time() - start_time)
+        speaker_sim = round(compute_speaker_similarity(str(ref_audio_path), str(output_path)), 4)
+
+        self._update_progress(100, "Speech synthesis complete!", inference_time)
 
         return {
             "output_path": str(output_path),
             "output_filename": output_filename,
             "output_url": f"/data/outputs/{output_filename}",
             "duration_seconds": out_meta["duration_seconds"],
-            "sample_rate": self.sample_rate,
+            "sample_rate": sr,
             "channels": 1,
             "peak_amplitude": out_meta["peak_amplitude"],
             "clipping_detected": out_meta["clipping_detected"],
             "snr_estimate": out_meta["snr_estimate"],
             "silence_ratio": out_meta["silence_ratio"],
-            "wer": wer_res["wer"],
-            "cer": cer_res["cer"],
-            "recognized_transcript": recognized_text,
-            "speaker_similarity": calibrated_similarity,
+            "wer": wer,
+            "cer": cer,
+            "recognized_transcript": recognized,
+            "speaker_similarity": speaker_sim,
             "inference_time_seconds": inference_time,
             "cpu_peak": peak_cpu,
-            "ram_peak_mb": peak_ram
+            "ram_peak_mb": peak_ram,
         }
 
-# Global engine instance
+
+# Global engine instance (model weights are loaded lazily on first use / load())
 voice_cloning_engine = VoiceCloningEngine()

@@ -38,29 +38,27 @@ class SynthesisService:
                 ref_transcript = first_profile.reference_transcript
                 profile_name = first_profile.name
             else:
-                # Create a sample reference WAV for seamless initial operation
-                from backend.app.core.config import REFERENCES_DIR
-                sample_path = REFERENCES_DIR / "sample_reference.wav"
-                if not sample_path.exists():
-                    import numpy as np
-                    import soundfile as sf
-                    t = np.linspace(0, 3.0, 72000, endpoint=False)
-                    audio = 0.5 * np.sin(2 * np.pi * 220 * t) * np.exp(-t)
-                    sf.write(str(sample_path), audio.astype(np.float32), 24000)
-                ref_path = str(sample_path)
-                ref_transcript = "This is a reference sentence spoken by me."
-                profile_name = "Default Voice"
+                raise HTTPException(
+                    status_code=400,
+                    detail="No reference voice available. Upload a human voice recording (5-15 s) with its exact transcript first.",
+                )
 
-        # Execute synthesis through ML Model Adapter
-        result = ModelAdapter.synthesize_speech(
-            ref_audio_path=ref_path,
-            ref_transcript=ref_transcript,
-            target_text=request.target_text,
-            speech_speed=request.speech_speed,
-            pitch=request.pitch,
-            temperature=request.temperature,
-            seed=request.seed
-        )
+        # Execute synthesis through ML Model Adapter (real neural cloning)
+        from ml.inference_engine import ModelNotAvailableError
+        try:
+            result = ModelAdapter.synthesize_speech(
+                ref_audio_path=ref_path,
+                ref_transcript=ref_transcript,
+                target_text=request.target_text,
+                speech_speed=request.speech_speed,
+                pitch=request.pitch,
+                temperature=request.temperature,
+                seed=request.seed
+            )
+        except ModelNotAvailableError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         # Record Generation Job in Database
         job = GenerationJob(

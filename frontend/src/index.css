@@ -1,6 +1,15 @@
 @import "tailwindcss";
 
+/* Class-driven dark mode: `dark:` utilities follow <html class="dark"> set by the theme toggle */
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
+  --border-header: #161a33;
+  --text-hover: #ffffff;
+  --text-mono: #cbd5e1;
+  --text-nav: #94a3b8;
+  --text-nav-hover: #e2e8f0;
+  --bg-nav-hover: #13172e;
   --bg-page: #080a14;
   --bg-sidebar: #0b0d1b;
   --bg-header: #080a14;
@@ -15,6 +24,12 @@
 }
 
 html.light {
+  --border-header: #e2e8f0;
+  --text-hover: #0f172a;
+  --text-mono: #334155;
+  --text-nav: #475569;
+  --text-nav-hover: #0f172a;
+  --bg-nav-hover: #f1f5f9;
   --bg-page: #f1f5f9;
   --bg-sidebar: #ffffff;
   --bg-header: #ffffff;

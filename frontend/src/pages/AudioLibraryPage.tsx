@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
+import type { FC } from 'react';
 import { FileAudio } from 'lucide-react';
 import type { GenerationJob, VoiceProfile } from '../types';
 import { SynthesisAPI, ProfileAPI } from '../services/api';
 
-export const AudioLibraryPage: React.FC = () => {
+export const AudioLibraryPage: FC = () => {
   const [history, setHistory] = useState<GenerationJob[]>([]);
   const [profiles, setProfiles] = useState<VoiceProfile[]>([]);
 

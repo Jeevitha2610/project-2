@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
+import type { FC } from 'react';
 import { BarChart2 } from 'lucide-react';
 import type { GenerationJob } from '../types';
 import { SynthesisAPI } from '../services/api';
 
-export const EvaluationPage: React.FC = () => {
+export const EvaluationPage: FC = () => {
   const [history, setHistory] = useState<GenerationJob[]>([]);
 
   useEffect(() => {

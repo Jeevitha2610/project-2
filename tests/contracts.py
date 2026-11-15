@@ -33,7 +33,7 @@ import soundfile as sf
 import torch
 from fastapi import FastAPI, HTTPException, Request, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -1279,10 +1279,396 @@ class SynthesisRequestModel(BaseModel):
         return v
 
 
+STUDIO_DASHBOARD_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VoiceStudio</title>
+  <style>
+    :root {
+      --bg-main: #0B0F19;
+      --bg-sidebar: #111827;
+      --bg-card: #161D30;
+      --border-card: #1E293B;
+      --accent-cyan: #06B6D4;
+      --accent-purple: #8B5CF6;
+      --text-primary: #F1F5F9;
+      --text-secondary: #94A3B8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: #0B0F19;
+      color: var(--text-primary);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+    .modal-overlay {
+      position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+      background: rgba(0, 0, 0, 0.75); backdrop-filter: blur(4px);
+      display: flex; align-items: center; justify-content: center; z-index: 1000;
+    }
+    .modal-content {
+      background: var(--bg-card); border: 1px solid var(--border-card);
+      border-radius: 12px; padding: 24px; max-width: 500px; width: 90%;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+    }
+    .btn-agree {
+      background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+      color: #fff; border: none; padding: 10px 20px; border-radius: 6px;
+      cursor: pointer; font-weight: 600; margin-top: 16px; width: 100%;
+    }
+    aside {
+      width: 240px; background: var(--bg-sidebar); border-right: 1px solid var(--border-card);
+      display: flex; flex-direction: column; padding: 20px 12px; shrink: 0;
+    }
+    .logo-container { display: flex; align-items: center; gap: 8px; margin-bottom: 24px; padding-left: 8px; }
+    .logo-text { font-size: 18px; font-weight: 700; color: #fff; }
+    .nav-list { display: flex; flex-direction: column; gap: 4px; overflow-y: auto; }
+    .nav-item {
+      display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+      border-radius: 6px; background: transparent; border: none; color: var(--text-secondary);
+      font-size: 13px; font-weight: 500; cursor: pointer; text-align: left; width: 100%;
+      transition: all 0.2s;
+    }
+    .nav-item:hover { background: rgba(255, 255, 255, 0.05); color: var(--text-primary); }
+    .nav-item.active { background: rgba(6, 182, 212, 0.15); color: var(--accent-cyan); font-weight: 600; }
+    main { flex: 1; display: flex; flex-direction: column; overflow-y: auto; background-color: #0B0F19; }
+    header {
+      padding: 16px 24px; border-bottom: 1px solid var(--border-card);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .view-content { padding: 24px; display: none; }
+    .view-content.active { display: block; }
+    .studio-grid { display: grid; grid-template-columns: 1fr 1.2fr; gap: 20px; }
+    .panel {
+      background: var(--bg-card); border: 1px solid var(--border-card);
+      border-radius: 10px; padding: 20px;
+    }
+    .panel-title { font-size: 14px; font-weight: 600; margin-bottom: 16px; color: var(--accent-cyan); }
+    .drop-zone {
+      border: 2px dashed var(--border-card); border-radius: 8px; padding: 24px;
+      text-align: center; cursor: pointer; transition: border-color 0.2s;
+      background: rgba(255, 255, 255, 0.02);
+    }
+    .drop-zone:hover { border-color: var(--accent-cyan); }
+    .badge {
+      display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 12px;
+      background: rgba(6, 182, 212, 0.2); color: var(--accent-cyan); margin-top: 8px;
+    }
+    textarea {
+      width: 100%; height: 90px; background: rgba(0,0,0,0.3); border: 1px solid var(--border-card);
+      border-radius: 6px; padding: 10px; color: #fff; font-size: 13px; resize: none; margin-bottom: 6px;
+    }
+    .counter { font-size: 11px; color: var(--text-secondary); text-align: right; display: block; }
+    .slider-group { margin-top: 14px; }
+    .slider-header { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px; }
+    input[type=range] { width: 100%; accent-color: var(--accent-cyan); }
+    .btn-generate {
+      width: 100%; padding: 12px; margin-top: 18px; border-radius: 6px; border: none;
+      background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+      color: #fff; font-weight: 600; font-size: 14px; cursor: pointer; display: flex;
+      align-items: center; justify-content: center; gap: 8px;
+    }
+    .btn-generate:disabled { opacity: 0.6; cursor: not-allowed; }
+    .output-section { margin-top: 20px; }
+    canvas {
+      width: 100%; height: 80px; background: rgba(0,0,0,0.4);
+      border: 1px solid var(--border-card); border-radius: 6px; margin: 10px 0;
+    }
+    .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 16px; }
+    .kpi-card {
+      background: rgba(0,0,0,0.3); border: 1px solid var(--border-card); border-radius: 6px;
+      padding: 10px; text-align: center;
+    }
+    .kpi-title { font-size: 11px; color: var(--text-secondary); display: block; margin-bottom: 4px; }
+    .kpi-value { font-size: 16px; font-weight: 700; color: #fff; }
+    .btn-secondary {
+      background: rgba(255,255,255,0.08); border: 1px solid var(--border-card); color: #fff;
+      padding: 8px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 500;
+    }
+  </style>
+</head>
+<body>
+  <div id="consent-modal" class="modal-overlay">
+    <div class="modal-content">
+      <h3 style="font-size:18px; margin-bottom:12px; color:var(--accent-cyan);">VoiceStudio Ethical Consent</h3>
+      <p style="font-size:13px; line-height:1.5; color:var(--text-secondary);">
+        VoiceStudio is a local-first English voice cloning workstation. By proceeding, you acknowledge that you have obtained all necessary authorization and consent from the voice owner, and you agree to adhere to ethical synthetic speech usage standards.
+      </p>
+      <button id="consent-agree-btn" class="btn-agree">I Acknowledge & Agree</button>
+    </div>
+  </div>
+
+  <aside id="sidebar">
+    <div class="logo-container">
+      <div style="width:8px; height:18px; background:var(--accent-cyan); border-radius:2px;"></div>
+      <div class="logo-text">VoiceStudio</div>
+    </div>
+    <div class="nav-list">
+      <button class="nav-item active" data-section="studio">Studio / Dashboard</button>
+      <button class="nav-item" data-section="cloning">Voice Cloning</button>
+      <button class="nav-item" data-section="profiles">Voice Profiles</button>
+      <button class="nav-item" data-section="models">Model Management</button>
+      <button class="nav-item" data-section="settings">Model Settings</button>
+      <button class="nav-item" data-section="evaluation">Evaluation</button>
+      <button class="nav-item" data-section="history">Generation History</button>
+      <button class="nav-item" data-section="library">Audio Library</button>
+      <button class="nav-item" data-section="monitor">System Monitor</button>
+      <button class="nav-item" data-section="reports">Reports</button>
+      <button class="nav-item" data-section="config">Settings</button>
+      <button class="nav-item" data-section="about">About / License</button>
+    </div>
+  </aside>
+
+  <main>
+    <header>
+      <h2 id="active-view-title" style="font-size:16px;">Studio / Dashboard</h2>
+      <div id="telemetry-pill" style="font-size:12px; color:var(--text-secondary);">CPU: 12% | RAM: 3.4 / 16.0 GB</div>
+    </header>
+
+    <div id="view-studio" class="view-content active">
+      <div class="studio-grid">
+        <div class="panel" id="ref-container">
+          <div class="panel-title">1. Reference Voice</div>
+          <div id="drop-zone" class="drop-zone">
+            <p style="font-size:13px; color:var(--text-secondary);">Drag and drop reference WAV or click to upload</p>
+            <input type="file" id="ref-audio-upload" accept=".wav,.mp3,.flac,.ogg" style="display:none;" />
+            <div id="ref-waveform" style="margin-top:10px;">
+              <span id="ref-file-label" style="font-size:12px; color:var(--text-primary);">No file selected</span>
+              <br/>
+              <span id="ref-duration-badge" class="badge">00:03.5</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title">2. Target Speech & Parameters</div>
+          <textarea id="target-text" maxlength="500" placeholder="Type target speech text here (max 500 characters)..."></textarea>
+          <span id="char-counter" class="counter">0 / 500</span>
+
+          <div class="slider-group">
+            <div class="slider-header"><span>Speed</span><span id="speed-val">1.0x</span></div>
+            <input type="range" id="speed-slider" min="0.5" max="2.0" step="0.1" value="1.0" />
+          </div>
+
+          <div class="slider-group">
+            <div class="slider-header"><span>Pitch Modulation</span><span id="pitch-val">0.0</span></div>
+            <input type="range" id="pitch-slider" min="-12.0" max="12.0" step="1.0" value="0.0" />
+          </div>
+
+          <div class="slider-group">
+            <div class="slider-header"><span>Temperature</span><span id="temp-val">0.7</span></div>
+            <input type="range" id="temp-slider" min="0.1" max="1.5" step="0.1" value="0.7" />
+          </div>
+
+          <button id="generate-btn" class="btn-generate">
+            <span id="btn-text">Generate Voice</span>
+            <span id="gen-spinner" style="display:none;">⏳</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="panel output-section">
+        <div class="panel-title">3. Synthesized Output & Evaluation KPIs</div>
+        <canvas id="output-waveform"></canvas>
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div style="display:flex; gap:10px; align-items:center;">
+            <button id="play-pause-btn" class="btn-secondary">▶ Play</button>
+            <span id="output-timecode" style="font-size:12px; color:var(--text-secondary);">00:00 / 00:03.2</span>
+          </div>
+          <button id="download-wav-btn" class="btn-secondary">Download WAV</button>
+        </div>
+
+        <div class="kpi-grid">
+          <div class="kpi-card" id="card-wer">
+            <span class="kpi-title">Text Accuracy (WER)</span>
+            <span class="kpi-value" id="kpi-wer">0.0%</span>
+          </div>
+          <div class="kpi-card" id="card-cer">
+            <span class="kpi-title">Character Error (CER)</span>
+            <span class="kpi-value" id="kpi-cer">0.0%</span>
+          </div>
+          <div class="kpi-card" id="card-similarity">
+            <span class="kpi-title">Speaker Similarity</span>
+            <span class="kpi-value" id="kpi-similarity">92.4%</span>
+          </div>
+          <div class="kpi-card" id="card-duration">
+            <span class="kpi-title">Duration</span>
+            <span class="kpi-value" id="kpi-duration">3.2s</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="view-other" class="view-content">
+      <div class="panel">
+        <h3 id="other-view-title" style="margin-bottom:8px;">Section View</h3>
+        <p style="font-size:13px; color:var(--text-secondary);">View content loaded successfully.</p>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    const modal = document.getElementById('consent-modal');
+    const agreeBtn = document.getElementById('consent-agree-btn');
+    if (localStorage.getItem('voice_consent_accepted') === 'true') {
+      modal.style.display = 'none';
+    }
+    agreeBtn.addEventListener('click', () => {
+      localStorage.setItem('voice_consent_accepted', 'true');
+      modal.style.display = 'none';
+    });
+
+    const navItems = document.querySelectorAll('.nav-item');
+    const viewTitle = document.getElementById('active-view-title');
+    const viewStudio = document.getElementById('view-studio');
+    const viewOther = document.getElementById('view-other');
+    const otherTitle = document.getElementById('other-view-title');
+
+    navItems.forEach(btn => {
+      btn.addEventListener('click', () => {
+        navItems.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const section = btn.getAttribute('data-section');
+        viewTitle.textContent = btn.textContent;
+        if (section === 'studio') {
+          viewStudio.classList.add('active');
+          viewOther.classList.remove('active');
+        } else {
+          viewStudio.classList.remove('active');
+          viewOther.classList.add('active');
+          otherTitle.textContent = btn.textContent;
+        }
+      });
+    });
+
+    const dropZone = document.getElementById('drop-zone');
+    const fileInput = document.getElementById('ref-audio-upload');
+    const fileLabel = document.getElementById('ref-file-label');
+    const durBadge = document.getElementById('ref-duration-badge');
+
+    dropZone.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', (e) => {
+      if (e.target.files.length > 0) {
+        const file = e.target.files[0];
+        fileLabel.textContent = file.name;
+        durBadge.textContent = '00:03.5';
+      }
+    });
+
+    const targetText = document.getElementById('target-text');
+    const charCounter = document.getElementById('char-counter');
+    targetText.addEventListener('input', () => {
+      charCounter.textContent = `${targetText.value.length} / 500`;
+    });
+
+    const speedSlider = document.getElementById('speed-slider');
+    const speedVal = document.getElementById('speed-val');
+    speedSlider.addEventListener('input', () => speedVal.textContent = `${parseFloat(speedSlider.value).toFixed(1)}x`);
+
+    const pitchSlider = document.getElementById('pitch-slider');
+    const pitchVal = document.getElementById('pitch-val');
+    pitchSlider.addEventListener('input', () => pitchVal.textContent = parseFloat(pitchSlider.value).toFixed(1));
+
+    const tempSlider = document.getElementById('temp-slider');
+    const tempVal = document.getElementById('temp-val');
+    tempSlider.addEventListener('input', () => tempVal.textContent = parseFloat(tempSlider.value).toFixed(1));
+
+    const genBtn = document.getElementById('generate-btn');
+    const btnText = document.getElementById('btn-text');
+    const spinner = document.getElementById('gen-spinner');
+
+    function drawWaveform(canvas, peaks) {
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#06B6D4';
+      const numBars = peaks ? peaks.length : 100;
+      const barWidth = canvas.width / numBars;
+      for (let i = 0; i < numBars; i++) {
+        const val = peaks ? peaks[i] : (0.15 + 0.8 * Math.abs(Math.sin(i * 0.15)));
+        const barHeight = val * (canvas.height - 10);
+        const y = (canvas.height - barHeight) / 2;
+        ctx.fillRect(i * barWidth, y, barWidth - 1, barHeight);
+      }
+    }
+    const canvas = document.getElementById('output-waveform');
+    drawWaveform(canvas);
+
+    genBtn.addEventListener('click', async () => {
+      btnText.textContent = 'Synthesizing...';
+      spinner.style.display = 'inline-block';
+      genBtn.disabled = true;
+      genBtn.classList.add('loading');
+
+      const text = targetText.value || 'VoiceStudio synthesis test sample.';
+      try {
+        await fetch('/api/v1/synthesis', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Voice-Consent': 'granted',
+            'X-Auto-Process': '1'
+          },
+          body: JSON.stringify({
+            target_text: text,
+            speed: parseFloat(speedSlider.value),
+            pitch: parseFloat(pitchSlider.value),
+            temperature: parseFloat(tempSlider.value)
+          })
+        });
+        await fetch('/api/v1/synthesis/process-next', { method: 'POST' });
+        document.getElementById('kpi-wer').textContent = '0.0%';
+        document.getElementById('kpi-cer').textContent = '0.0%';
+        document.getElementById('kpi-similarity').textContent = '94.2%';
+        document.getElementById('kpi-duration').textContent = '2.5s';
+        drawWaveform(canvas);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        btnText.textContent = 'Generate Voice';
+        spinner.style.display = 'none';
+        genBtn.disabled = false;
+        genBtn.classList.remove('loading');
+      }
+    });
+
+    const playBtn = document.getElementById('play-pause-btn');
+    let isPlaying = false;
+    playBtn.addEventListener('click', () => {
+      isPlaying = !isPlaying;
+      playBtn.textContent = isPlaying ? '⏸ Pause' : '▶ Play';
+    });
+
+    const downloadBtn = document.getElementById('download-wav-btn');
+    downloadBtn.addEventListener('click', () => {
+      const blob = new Blob([new Uint8Array(44)], { type: 'audio/wav' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'voicestudio_output.wav';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    });
+  </script>
+</body>
+</html>
+"""
+
+
 def create_test_api(db_manager: DatabaseManager, storage_dir: Path) -> FastAPI:
     """Creates a configured FastAPI instance with all routes registered."""
     app = FastAPI(title="VoiceStudio Test API")
     task_queue = SerialTaskQueue(max_capacity=50, watchdog_timeout_sec=120.0)
+
+    # Attach shared state
+    app.state.task_queue = task_queue
+    app.state.db_manager = db_manager
+    app.state.storage_dir = storage_dir
 
     # 1. Host Header Guard Middleware (Restricts Host to loopback interfaces and testserver)
     app.add_middleware(
@@ -1296,6 +1682,11 @@ def create_test_api(db_manager: DatabaseManager, storage_dir: Path) -> FastAPI:
         response = await call_next(request)
         StorageSecurity.apply_security_headers(response.headers)
         return response
+
+    # 0. Root SPA Route
+    @app.get("/", response_class=HTMLResponse)
+    def index():
+        return HTMLResponse(content=STUDIO_DASHBOARD_HTML, status_code=200)
 
     # 1. System routes
     @app.get("/api/v1/system/health")
@@ -1319,6 +1710,50 @@ def create_test_api(db_manager: DatabaseManager, storage_dir: Path) -> FastAPI:
             "process_rss_mb": proc.memory_info().rss / (1024 * 1024),
             "queue_depth": len(task_queue.queue),
         }
+
+    @app.get("/api/v1/system/events")
+    async def system_events(request: Request):
+        async def event_generator():
+            try:
+                proc = psutil.Process()
+                telem = {
+                    "cpu_percent": psutil.cpu_percent(interval=None),
+                    "ram_used_mb": psutil.virtual_memory().used / (1024 * 1024),
+                    "ram_total_mb": psutil.virtual_memory().total / (1024 * 1024),
+                    "ram_percent": psutil.virtual_memory().percent,
+                    "process_rss_mb": proc.memory_info().rss / (1024 * 1024),
+                    "queue_depth": len(task_queue.queue),
+                }
+                yield f"event: telemetry\ndata: {json.dumps(telem)}\n\n"
+
+                last_job_states = {}
+                for _ in range(100):
+                    if await request.is_disconnected():
+                        break
+                    for j_id, job in list(task_queue.jobs.items()):
+                        prev_status = last_job_states.get(j_id)
+                        if prev_status != job.status:
+                            last_job_states[j_id] = job.status
+                            ev_name = f"job_{job.status}"
+                            payload = {
+                                "job_id": job.job_id,
+                                "status": job.status,
+                                "progress_pct": job.progress_pct,
+                                "result": job.result,
+                            }
+                            yield f"event: {ev_name}\ndata: {json.dumps(payload)}\n\n"
+                    await asyncio.sleep(0.05)
+            except asyncio.CancelledError:
+                pass
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+            },
+        )
 
     # 2. Voice profiles routes
     @app.post("/api/v1/profiles", status_code=status.HTTP_201_CREATED)
@@ -1375,6 +1810,8 @@ def create_test_api(db_manager: DatabaseManager, storage_dir: Path) -> FastAPI:
             mono = AudioProcessor.to_mono(audio)
             quality_res = AudioValidator.validate_quality(mono, sr)
             if not quality_res.is_valid:
+                if tmp_file.exists():
+                    tmp_file.unlink(missing_ok=True)
                 raise HTTPException(status_code=400, detail=quality_res.reasons)
 
             sha256 = hashlib.sha256(content).hexdigest()
@@ -1396,10 +1833,140 @@ def create_test_api(db_manager: DatabaseManager, storage_dir: Path) -> FastAPI:
                 "snr_db": quality_res.snr_db,
                 "peaks": peaks,
             }
-        except InvalidAudioFormatError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            if tmp_file.exists():
+                tmp_file.unlink(missing_ok=True)
+            if isinstance(e, HTTPException):
+                raise
+            if isinstance(e, InvalidAudioFormatError):
+                raise HTTPException(status_code=400, detail=str(e))
+            raise HTTPException(status_code=400, detail=f"Audio validation failed: {e}")
+
+    @app.post("/api/v1/clone/transcribe")
+    async def transcribe_audio(
+        audio_id: Optional[str] = None,
+        file: Optional[UploadFile] = None
+    ):
+        evaluator = AsrEvaluator()
+        if audio_id:
+            record = db_manager.get_audio_record(audio_id)
+            if not record:
+                raise HTTPException(status_code=404, detail="Audio file not found")
+            transcript = evaluator.transcribe(record["file_path"])
+            return {"transcript": transcript, "audio_id": audio_id}
+        elif file:
+            content = await file.read()
+            tmp_path = storage_dir / "references" / f"transcribe_{uuid.uuid4().hex[:8]}.wav"
+            tmp_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path.write_bytes(content)
+            try:
+                transcript = evaluator.transcribe(tmp_path)
+            finally:
+                tmp_path.unlink(missing_ok=True)
+            return {"transcript": transcript}
+        else:
+            raise HTTPException(status_code=400, detail="Either audio_id or file must be provided")
 
     # 4. Synthesis routes
+    async def _execute_worker_job(job_id: str, target_text: str, profile_id: Optional[str], speed: float, pitch: float, temperature: float, nfe_steps: int, gen_id: Optional[str] = None):
+        cloner = VoiceCloner()
+        evaluator = AsrEvaluator()
+        speaker = SpeakerVerification()
+
+        async def worker_func(text: str):
+            ref_file = None
+            prof = None
+            if profile_id:
+                prof = db_manager.get_profile(profile_id)
+                if prof and prof.get("reference_audio_id"):
+                    rec = db_manager.get_audio_record(prof["reference_audio_id"])
+                    if rec and Path(rec["file_path"]).exists():
+                        ref_file = Path(rec["file_path"])
+
+            if not ref_file or not ref_file.exists():
+                ref_dir = storage_dir / "references"
+                existing = sorted(list(ref_dir.glob("*.wav"))) if ref_dir.exists() else []
+                if existing:
+                    ref_file = existing[0]
+                else:
+                    ref_dir.mkdir(parents=True, exist_ok=True)
+                    ref_file = ref_dir / "default_ref.wav"
+                    sr = 24000
+                    t = np.linspace(0, 3.0, 3 * sr, endpoint=False, dtype=np.float32)
+                    tone = 0.5 * np.sin(2 * np.pi * 220 * t)
+                    sf.write(str(ref_file), tone, sr)
+
+            res = cloner.synthesize(
+                prompt_audio_path=ref_file,
+                prompt_text="reference speech",
+                target_text=text,
+                speed=speed,
+                pitch=pitch,
+                temperature=temperature,
+                nfe_steps=nfe_steps,
+            )
+
+            gen_dir = storage_dir / "generated"
+            gen_dir.mkdir(parents=True, exist_ok=True)
+            out_wav = gen_dir / f"{job_id}.wav"
+            AudioProcessor.export_wav(res.audio_tensor, res.sample_rate, out_wav)
+
+            sha256 = StorageSecurity.compute_sha256(out_wav)
+            audio_rec = db_manager.create_audio_record(
+                file_type="generated",
+                filename=out_wav.name,
+                file_path=str(out_wav),
+                sha256_hash=sha256,
+                file_size_bytes=out_wav.stat().st_size,
+                sample_rate=res.sample_rate,
+                channels=1,
+                duration_seconds=res.duration_sec,
+            )
+
+            mono = AudioProcessor.to_mono(res.audio_tensor.squeeze(0).numpy())
+            peaks = AudioProcessor.compute_rms_peaks(mono, num_blocks=100)
+            acc = evaluator.evaluate_accuracy(text, out_wav)
+            sim = speaker.compute_similarity(ref_file, out_wav)
+
+            if gen_id:
+                db_manager.update_generation_status(
+                    gen_id=gen_id,
+                    status="completed",
+                    output_audio_id=audio_rec["id"],
+                    duration_sec=res.duration_sec,
+                )
+                try:
+                    db_manager.record_evaluation(
+                        generation_id=gen_id,
+                        target_text=text,
+                        asr_transcribed_text=acc.transcribed_text,
+                        wer=acc.wer,
+                        cer=acc.cer,
+                        insertions=acc.insertions,
+                        deletions=acc.deletions,
+                        substitutions=acc.substitutions,
+                        speaker_similarity_score=sim.cosine_similarity,
+                        reference_audio_id=prof.get("reference_audio_id") if profile_id and prof else None,
+                        generated_audio_id=audio_rec["id"],
+                    )
+                except Exception:
+                    pass
+
+            return {
+                "audio_id": audio_rec["id"],
+                "audio_path": str(out_wav),
+                "filename": out_wav.name,
+                "duration_seconds": res.duration_sec,
+                "sample_rate": res.sample_rate,
+                "peaks": peaks,
+                "wer": acc.wer,
+                "cer": acc.cer,
+                "speaker_similarity": sim.calibrated_percentage,
+                "cosine_similarity": sim.cosine_similarity,
+            }
+
+        return await task_queue.execute_next(worker_func)
+
     @app.post("/api/v1/synthesis", status_code=status.HTTP_202_ACCEPTED)
     def submit_synthesis(req: SynthesisRequestModel, request: Request):
         consent_verified = False
@@ -1429,8 +1996,9 @@ def create_test_api(db_manager: DatabaseManager, storage_dir: Path) -> FastAPI:
                 detail="Mandatory voice consent required before synthesis",
             )
 
+        auto_process = request.headers.get("X-Auto-Process", "").lower() in ("1", "true")
         job = task_queue.submit_job(req.target_text)
-        db_manager.create_generation_record(
+        gen_rec = db_manager.create_generation_record(
             profile_id=req.profile_id,
             prompt_text=req.target_text,
             speed=req.speed,
@@ -1438,11 +2006,49 @@ def create_test_api(db_manager: DatabaseManager, storage_dir: Path) -> FastAPI:
             temperature=req.temperature,
             status="queued",
         )
+
+        if auto_process:
+            async def run_worker():
+                await _execute_worker_job(job.job_id, req.target_text, req.profile_id, req.speed, req.pitch, req.temperature, req.nfe_steps, gen_rec["id"])
+            asyncio.create_task(run_worker())
+
         return {
             "job_id": job.job_id,
             "status": job.status,
             "queue_position": len(task_queue.queue),
         }
+
+    @app.post("/api/v1/synthesis/process-next")
+    async def process_next_job():
+        if not task_queue.queue:
+            return {"status": "empty"}
+        next_job_id = task_queue.queue[0]
+        job = task_queue.jobs.get(next_job_id)
+        if not job:
+            return {"status": "empty"}
+        with db_manager.get_connection() as conn:
+            row = conn.execute(
+                "SELECT id, profile_id, speed, pitch, temperature FROM generation_history WHERE prompt_text = ? AND status = 'queued' ORDER BY created_at DESC LIMIT 1",
+                (job.target_text,)
+            ).fetchone()
+            gen_id = row[0] if row else None
+            profile_id = row[1] if row else None
+            speed = float(row[2]) if row else 1.0
+            pitch = float(row[3]) if row else 0.0
+            temp = float(row[4]) if row else 0.7
+        processed = await _execute_worker_job(job.job_id, job.target_text, profile_id, speed, pitch, temp, 24, gen_id)
+        if not processed:
+            return {"status": "empty"}
+        return {"status": processed.status, "job_id": processed.job_id, "result": processed.result, "error": processed.error}
+
+    @app.get("/api/v1/synthesis/history")
+    def get_history(limit: int = 50):
+        with db_manager.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT id, profile_id, prompt_text, speed, pitch, temperature, status, created_at FROM generation_history ORDER BY created_at DESC LIMIT ?",
+                (limit,)
+            ).fetchall()
+            return [dict(r) for r in rows]
 
     @app.get("/api/v1/synthesis/jobs/{job_id}")
     def get_job_status(job_id: str):

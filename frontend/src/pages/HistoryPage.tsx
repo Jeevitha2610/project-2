@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
+import type { FC } from 'react';
 import { Clock, Download, Trash2 } from 'lucide-react';
 import type { GenerationJob } from '../types';
 import { SynthesisAPI } from '../services/api';
 
-export const HistoryPage: React.FC = () => {
+export const HistoryPage: FC = () => {
   const [history, setHistory] = useState<GenerationJob[]>([]);
 
   const fetchHistory = () => {

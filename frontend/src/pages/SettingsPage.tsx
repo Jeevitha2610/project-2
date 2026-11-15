@@ -1,7 +1,7 @@
-import React from 'react';
+import type { FC } from 'react';
 import { Settings, Shield, Save } from 'lucide-react';
 
-export const SettingsPage: React.FC = () => {
+export const SettingsPage: FC = () => {
   return (
     <div className="p-8 max-w-[1400px] mx-auto space-y-6">
       <div>
@@ -19,7 +19,7 @@ export const SettingsPage: React.FC = () => {
           <div>
             <label className="block text-slate-300 font-semibold mb-1">Default Output Audio Sample Rate</label>
             <select className="w-full bg-[#161a2e] border border-[#232948] rounded-xl p-2.5 text-slate-200">
-              <option>24,000 Hz (Optimal for IndicF5 / High Fidelity)</option>
+              <option>24,000 Hz (Native F5-TTS rate / High Fidelity)</option>
               <option>22,050 Hz (Standard Speech)</option>
               <option>16,000 Hz (Compact)</option>
             </select>

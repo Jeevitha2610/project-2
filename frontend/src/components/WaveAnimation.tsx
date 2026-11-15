@@ -1,6 +1,7 @@
-import React, { useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
+import type { FC } from 'react';
 
-export const WaveAnimation: React.FC = () => {
+export const WaveAnimation: FC = () => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
@@ -79,3 +80,4 @@ export const WaveAnimation: React.FC = () => {
     </div>
   );
 };
+

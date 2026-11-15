@@ -1,4 +1,4 @@
-import React from 'react';
+import type { FC } from 'react';
 import { Sun, Moon } from 'lucide-react';
 import type { SystemMetrics } from '../types';
 
@@ -10,7 +10,7 @@ interface HeaderProps {
   toggleTheme: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ 
+export const Header: FC<HeaderProps> = ({ 
   currentTab, 
   setCurrentTab, 
   systemMetrics,
@@ -25,7 +25,7 @@ export const Header: React.FC<HeaderProps> = ({
   ];
 
   return (
-    <header className="h-[68px] px-8 border-b border-[#161a33] dark:border-[#161a33] light:border-slate-200 flex items-center justify-between sticky top-0 z-20 backdrop-blur-md transition-colors"
+    <header className="h-[68px] px-8 border-b border-[var(--border-header)] flex items-center justify-between sticky top-0 z-20 backdrop-blur-md transition-colors"
       style={{ backgroundColor: 'var(--bg-header)' }}
     >
       {/* Top Pill Navigation */}
@@ -45,7 +45,7 @@ export const Header: React.FC<HeaderProps> = ({
               className={`px-5 py-1.5 rounded-full text-xs font-semibold transition-all ${
                 isActive
                   ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md shadow-purple-600/40'
-                  : 'text-slate-400 hover:text-white dark:hover:text-white light:hover:text-slate-900'
+                  : 'text-slate-400 hover:text-[var(--text-hover)]'
               }`}
             >
               {tab.label}
@@ -81,7 +81,7 @@ export const Header: React.FC<HeaderProps> = ({
           }}
         >
           <span>RAM</span>
-          <span className="font-mono text-slate-300 dark:text-slate-300 light:text-slate-700">
+          <span className="font-mono text-[var(--text-mono)]">
             {systemMetrics ? `${systemMetrics.ram_used_gb} / ${systemMetrics.ram_total_gb} GB` : '4.2 / 16 GB'}
           </span>
         </div>

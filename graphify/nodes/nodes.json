@@ -1,15 +1,23 @@
 [
+  {"id": "ui_app", "category": "Frontend Component", "name": "App", "file": "frontend/src/App.tsx"},
+  {"id": "ui_sidebar", "category": "Frontend Component", "name": "Sidebar", "file": "frontend/src/components/Sidebar.tsx"},
+  {"id": "ui_header", "category": "Frontend Component", "name": "Header", "file": "frontend/src/components/Header.tsx"},
+  {"id": "ui_wave_animation", "category": "Frontend Component", "name": "WaveAnimation", "file": "frontend/src/components/WaveAnimation.tsx"},
   {"id": "ui_studio_page", "category": "UI Page", "name": "StudioPage", "file": "frontend/src/pages/StudioPage.tsx"},
   {"id": "ui_profiles_page", "category": "UI Page", "name": "ProfilesPage", "file": "frontend/src/pages/ProfilesPage.tsx"},
   {"id": "ui_models_page", "category": "UI Page", "name": "ModelsPage", "file": "frontend/src/pages/ModelsPage.tsx"},
   {"id": "ui_evaluation_page", "category": "UI Page", "name": "EvaluationPage", "file": "frontend/src/pages/EvaluationPage.tsx"},
   {"id": "ui_history_page", "category": "UI Page", "name": "HistoryPage", "file": "frontend/src/pages/HistoryPage.tsx"},
   {"id": "ui_monitor_page", "category": "UI Page", "name": "SystemMonitorPage", "file": "frontend/src/pages/SystemMonitorPage.tsx"},
-  {"id": "ui_sidebar", "category": "Frontend Component", "name": "Sidebar", "file": "frontend/src/components/Sidebar.tsx"},
-  {"id": "ui_header", "category": "Frontend Component", "name": "Header", "file": "frontend/src/components/Header.tsx"},
+  {"id": "ui_library_page", "category": "UI Page", "name": "AudioLibraryPage", "file": "frontend/src/pages/AudioLibraryPage.tsx"},
+  {"id": "ui_reports_page", "category": "UI Page", "name": "ReportsPage", "file": "frontend/src/pages/ReportsPage.tsx"},
+  {"id": "ui_settings_page", "category": "UI Page", "name": "SettingsPage", "file": "frontend/src/pages/SettingsPage.tsx"},
+  {"id": "ui_about_page", "category": "UI Page", "name": "AboutPage", "file": "frontend/src/pages/AboutPage.tsx"},
   {"id": "frontend_api_client", "category": "Frontend Service", "name": "API Client", "file": "frontend/src/services/api.ts"},
-  
+  {"id": "frontend_types", "category": "Frontend Types", "name": "TypeScript Contracts", "file": "frontend/src/types/index.ts"},
+
   {"id": "fastapi_main", "category": "API Gateway", "name": "FastAPI App", "file": "backend/app/main.py"},
+  {"id": "backend_config", "category": "Backend Config", "name": "App Settings", "file": "backend/app/core/config.py"},
   {"id": "api_synthesis_route", "category": "API Route", "name": "/api/v1/synthesis", "file": "backend/app/api/endpoints/synthesis.py"},
   {"id": "api_profiles_route", "category": "API Route", "name": "/api/v1/profiles", "file": "backend/app/api/endpoints/profiles.py"},
   {"id": "api_monitoring_route", "category": "API Route", "name": "/api/v1/monitoring", "file": "backend/app/api/endpoints/monitoring.py"},
@@ -23,7 +31,7 @@
   {"id": "system_monitor", "category": "Monitoring Module", "name": "SystemMonitor", "file": "backend/app/monitoring/system.py"},
 
   {"id": "ml_model_adapter", "category": "ML Adapter", "name": "ModelAdapter", "file": "ml/model_adapter.py"},
-  {"id": "ml_inference_engine", "category": "ML Engine", "name": "VoiceCloningEngine", "file": "ml/inference_engine.py"},
+  {"id": "ml_inference_engine", "category": "ML Engine", "name": "VoiceCloningEngine (F5-TTS)", "file": "ml/inference_engine.py"},
   {"id": "ml_model_config", "category": "ML Config", "name": "ModelSettings", "file": "ml/model_config.py"},
 
   {"id": "db_voice_profile", "category": "Database Entity", "name": "VoiceProfile", "file": "backend/app/database/models.py"},
@@ -35,5 +43,8 @@
 
   {"id": "test_backend_e2e", "category": "Test Suite", "name": "test_backend.py", "file": "tests/test_backend.py"},
   {"id": "test_unit_audio", "category": "Test Suite", "name": "test_audio_processor.py", "file": "tests/unit/test_audio_processor.py"},
-  {"id": "test_api_suite", "category": "Test Suite", "name": "test_api_suite", "file": "tests/api"}
+  {"id": "test_unit_eval", "category": "Test Suite", "name": "test_audio.py", "file": "tests/unit/test_audio.py"},
+  {"id": "test_unit_ml", "category": "Test Suite", "name": "test_ml_contracts.py", "file": "tests/unit/test_ml_contracts.py"},
+  {"id": "test_unit_db", "category": "Test Suite", "name": "test_database.py", "file": "tests/unit/test_database.py"},
+  {"id": "test_api_suite", "category": "Test Suite", "name": "tests/api", "file": "tests/api"}
 ]

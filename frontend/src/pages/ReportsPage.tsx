@@ -1,7 +1,7 @@
-import React from 'react';
+import type { FC } from 'react';
 import { FileText, CheckCircle2 } from 'lucide-react';
 
-export const ReportsPage: React.FC = () => {
+export const ReportsPage: FC = () => {
   return (
     <div className="p-8 max-w-[1400px] mx-auto space-y-6">
       <div>
@@ -18,7 +18,7 @@ export const ReportsPage: React.FC = () => {
         <div className="bg-[#111425] border border-[#1e233d] rounded-2xl p-6 space-y-4 shadow-xl">
           <h3 className="text-base font-bold text-white">MODEL_SELECTION_REPORT</h3>
           <p className="text-xs text-slate-400 leading-relaxed">
-            Comparative evaluation of IndicF5, XTTS-v2, and OpenVoice V2 regarding CPU inference, peak RAM, licensing, and English zero-shot cloning fidelity.
+            Comparative evaluation of F5-TTS, XTTS-v2, and OpenVoice V2 regarding CPU inference, peak RAM, licensing, and English zero-shot cloning fidelity.
           </p>
           <div className="text-[11px] text-emerald-400 font-semibold flex items-center gap-1.5">
             <CheckCircle2 className="w-3.5 h-3.5" />

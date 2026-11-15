@@ -1,4 +1,4 @@
-import React from 'react';
+import type { FC } from 'react';
 import { 
   Sliders, 
   BarChart2, 
@@ -14,7 +14,7 @@ interface SidebarProps {
   systemMetrics: SystemMetrics | null;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ currentTab, setCurrentTab, systemMetrics }) => {
+export const Sidebar: FC<SidebarProps> = ({ currentTab, setCurrentTab, systemMetrics }) => {
   const navItems = [
     { id: 'synthesis', label: 'Synthesis', icon: 'waveform' },
     { id: 'profiles', label: 'Voice Profiles', icon: 'user' },
@@ -64,7 +64,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, setCurrentTab, sys
                 className={`w-full flex items-center gap-3.5 px-4 py-3 rounded-2xl text-[13.5px] font-semibold transition-all cursor-pointer ${
                   isActive
                     ? 'active-nav-glow text-white'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-[#13172e] dark:hover:bg-[#13172e] light:hover:bg-slate-100 light:text-slate-600'
+                    : 'text-[var(--text-nav)] hover:text-[var(--text-nav-hover)] hover:bg-[var(--bg-nav-hover)]'
                 }`}
               >
                 {/* Custom Icons matching Image 1 */}
@@ -107,7 +107,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, setCurrentTab, sys
           </span>
         </div>
         <div className="text-[11.5px] font-medium" style={{ color: 'var(--text-secondary)' }}>
-          Model: {systemMetrics?.model_name || 'IndicF5 (English)'}
+          Model: {systemMetrics?.model_name || 'F5-TTS v1 (English)'}
         </div>
         <div className="text-[11.5px] mt-1 flex justify-between" style={{ color: 'var(--text-secondary)' }}>
           <span>RAM: {systemMetrics ? `${systemMetrics.ram_total_gb} GB` : '16 GB'}</span>

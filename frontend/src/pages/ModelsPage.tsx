@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
+import type { FC } from 'react';
 import { Sliders } from 'lucide-react';
 import type { ModelInfo } from '../types';
 import { ModelsAPI } from '../services/api';
 
-export const ModelsPage: React.FC = () => {
+export const ModelsPage: FC = () => {
   const [models, setModels] = useState<ModelInfo[]>([]);
 
   useEffect(() => {

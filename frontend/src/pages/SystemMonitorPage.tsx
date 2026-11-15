@@ -1,4 +1,4 @@
-import React from 'react';
+import type { FC } from 'react';
 import { Activity, Cpu, Database, HardDrive, CheckCircle2 } from 'lucide-react';
 import type { SystemMetrics } from '../types';
 
@@ -6,7 +6,7 @@ interface SystemMonitorPageProps {
   systemMetrics: SystemMetrics | null;
 }
 
-export const SystemMonitorPage: React.FC<SystemMonitorPageProps> = ({ systemMetrics }) => {
+export const SystemMonitorPage: FC<SystemMonitorPageProps> = ({ systemMetrics }) => {
   return (
     <div className="p-8 max-w-[1400px] mx-auto space-y-6">
       <div>

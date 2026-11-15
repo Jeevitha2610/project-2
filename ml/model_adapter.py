@@ -9,7 +9,8 @@ class ModelAdapter:
             "device": voice_cloning_engine.device,
             "is_loaded": voice_cloning_engine.is_loaded,
             "sample_rate": voice_cloning_engine.sample_rate,
-            "license": "Apache-2.0 / Open Research",
+            "license": "Code MIT; weights CC-BY-NC-4.0 (non-commercial)",
+            "last_error": voice_cloning_engine.last_error,
             "supported_languages": ["English"]
         }
 

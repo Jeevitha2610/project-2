@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useRef } from 'react';
+import type { ChangeEvent, FC } from 'react';
 import { 
   Play, 
   Pause, 
@@ -12,8 +13,7 @@ import {
   Save, 
   Settings, 
   ChevronDown,
-  Upload,
-  Radio
+  Upload
 } from 'lucide-react';
 import type { VoiceProfile, GenerationJob, SystemMetrics } from '../types';
 import { SynthesisAPI, ProfileAPI, AudioAPI } from '../services/api';
@@ -27,7 +27,7 @@ interface StudioPageProps {
   systemMetrics: SystemMetrics | null;
 }
 
-export const StudioPage: React.FC<StudioPageProps> = ({
+export const StudioPage: FC<StudioPageProps> = ({
   profiles,
   selectedProfile,
   setSelectedProfile,
@@ -41,6 +41,9 @@ export const StudioPage: React.FC<StudioPageProps> = ({
   const [temperature, setTemperature] = useState(0.7);
   const [outputFormat, setOutputFormat] = useState('WAV (Lossless)');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [progressPercent, setProgressPercent] = useState(0);
+  const [progressStage, setProgressStage] = useState('');
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [lastJob, setLastJob] = useState<GenerationJob | null>(null);
 
   // Audio Playback State for Output
@@ -52,16 +55,34 @@ export const StudioPage: React.FC<StudioPageProps> = ({
   const [isRefPlaying, setIsRefPlaying] = useState(false);
   const refAudioRef = useRef<HTMLAudioElement | null>(null);
 
-  // Update transcript when selected profile changes
-  useEffect(() => {
+  // Update transcript when selected profile changes (state adjusted during render, no effect needed)
+  const [transcriptProfile, setTranscriptProfile] = useState<VoiceProfile | null>(null);
+  if (selectedProfile !== transcriptProfile) {
+    setTranscriptProfile(selectedProfile);
     if (selectedProfile) {
       setReferenceTranscript(selectedProfile.reference_transcript);
     }
-  }, [selectedProfile]);
+  }
 
   const handleGenerate = async () => {
     if (!targetText.trim()) return;
     setIsGenerating(true);
+    setProgressPercent(3);
+    setProgressStage('Initializing neural voice cloning engine...');
+    setElapsedSeconds(0);
+
+    const startTime = Date.now();
+    const pollInterval = setInterval(async () => {
+      try {
+        const prog = await SynthesisAPI.getProgress();
+        if (prog && typeof prog.percent === 'number') {
+          setProgressPercent(prog.percent);
+          if (prog.stage) setProgressStage(prog.stage);
+        }
+        setElapsedSeconds(Math.round((Date.now() - startTime) / 1000));
+      } catch (_) {}
+    }, 350);
+
     try {
       const job = await SynthesisAPI.generateSpeech({
         profile_id: selectedProfile?.id,
@@ -73,17 +94,26 @@ export const StudioPage: React.FC<StudioPageProps> = ({
         output_format: outputFormat,
         reference_transcript: referenceTranscript
       });
+      clearInterval(pollInterval);
+      setProgressPercent(100);
+      setProgressStage('Speech synthesis complete!');
       setLastJob(job);
       setIsPlaying(false);
       setAudioCurrentTime(0);
     } catch (err: any) {
+      clearInterval(pollInterval);
+      setProgressPercent(0);
+      setProgressStage('');
       alert(`Generation failed: ${err.response?.data?.detail || err.message}`);
     } finally {
-      setIsGenerating(false);
+      clearInterval(pollInterval);
+      setTimeout(() => {
+        setIsGenerating(false);
+      }, 1500);
     }
   };
 
-  const handleReferenceUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleReferenceUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
@@ -384,12 +414,12 @@ export const StudioPage: React.FC<StudioPageProps> = ({
             </div>
           </div>
 
-          {/* Centered Spanning Primary CTA Button matching Image 1 */}
-          <div className="flex justify-center pt-1">
+          {/* Centered Spanning Primary CTA Button & Live Progress Indicator */}
+          <div className="flex flex-col items-center pt-1 space-y-3">
             <button
               onClick={handleGenerate}
               disabled={isGenerating || !targetText.trim()}
-              className="w-full max-w-[540px] py-3.5 px-8 rounded-full generate-cta-glow text-white font-bold text-[15px] flex items-center justify-center gap-3 disabled:opacity-50 cursor-pointer shadow-xl select-none"
+              className="w-full max-w-[540px] py-3.5 px-8 rounded-full generate-cta-glow text-white font-bold text-[15px] flex items-center justify-center gap-3 disabled:opacity-50 cursor-pointer shadow-xl select-none transition-all"
             >
               {/* Animated Waveform Icon Lines */}
               <div className="flex items-center gap-0.5 h-4">
@@ -400,12 +430,63 @@ export const StudioPage: React.FC<StudioPageProps> = ({
                 <span className={`w-0.5 rounded-full bg-white ${isGenerating ? 'animate-wave-bar' : 'h-1.5'}`} style={{ animationDelay: '0.15s' }}></span>
               </div>
 
-              <span>{isGenerating ? 'Synthesizing Audio (CPU)...' : 'Generate Speech'}</span>
+              <span>{isGenerating ? `Synthesizing Audio (${progressPercent}%)...` : 'Generate Speech'}</span>
 
               <div className="w-5 h-5 rounded-full bg-white/20 flex items-center justify-center ml-1">
                 <Play className="w-2.5 h-2.5 fill-white ml-0.5" />
               </div>
             </button>
+
+            {/* Glowing Percentage Progress Bar when generating */}
+            {isGenerating && (
+              <div 
+                className="w-full max-w-[540px] p-4 rounded-2xl border shadow-2xl transition-all duration-300"
+                style={{
+                  backgroundColor: 'var(--bg-card)',
+                  borderColor: 'var(--border-card)'
+                }}
+              >
+                {/* Header row: Stage text & Percentage badge */}
+                <div className="flex items-center justify-between mb-2 text-xs">
+                  <div className="flex items-center gap-2 font-medium truncate max-w-[380px]" style={{ color: 'var(--text-primary)' }}>
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
+                    </span>
+                    <span className="truncate">{progressStage || 'Processing neural speech...'}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-mono text-slate-400">
+                      {elapsedSeconds}s
+                    </span>
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-bold font-mono bg-gradient-to-r from-purple-500/20 to-blue-500/20 text-cyan-300 border border-cyan-400/40 shadow-sm">
+                      {progressPercent}%
+                    </span>
+                  </div>
+                </div>
+
+                {/* The Progress Track and Animated Gradient Fill */}
+                <div 
+                  className="relative w-full h-3 rounded-full overflow-hidden border"
+                  style={{
+                    backgroundColor: 'var(--bg-card-inner)',
+                    borderColor: 'var(--border-inner)'
+                  }}
+                >
+                  <div 
+                    className="h-full rounded-full transition-all duration-300 ease-out relative"
+                    style={{
+                      width: `${Math.max(4, Math.min(100, progressPercent))}%`,
+                      background: 'linear-gradient(90deg, #06b6d4 0%, #8b5cf6 50%, #ec4899 100%)',
+                      boxShadow: '0 0 16px rgba(139, 92, 246, 0.75)'
+                    }}
+                  >
+                    {/* Glowing highlight line on leading edge */}
+                    <span className="absolute top-0 bottom-0 right-0 w-2 bg-white/90 rounded-full blur-[0.5px]"></span>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -487,7 +568,7 @@ export const StudioPage: React.FC<StudioPageProps> = ({
                   color: 'var(--text-primary)'
                 }}
               >
-                <span>IndicF5 (English)</span>
+                <span>F5-TTS v1 (English)</span>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#064e3b] text-[#34d399] border border-[#059669]/40 mr-5 flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
                   Loaded

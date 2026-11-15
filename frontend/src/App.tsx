@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { StudioPage } from './pages/StudioPage';
@@ -15,42 +15,77 @@ import { AboutPage } from './pages/AboutPage';
 import type { VoiceProfile, SystemMetrics } from './types';
 import { ProfileAPI, MonitoringAPI } from './services/api';
 
+type Theme = 'dark' | 'light';
+
+const THEME_KEY = 'voicestudio_theme';
+
+function readStoredTheme(): Theme {
+  try {
+    return localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark';
+  } catch {
+    return 'dark';
+  }
+}
+
 export function App() {
   const [currentTab, setCurrentTab] = useState('synthesis');
   const [profiles, setProfiles] = useState<VoiceProfile[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<VoiceProfile | null>(null);
   const [systemMetrics, setSystemMetrics] = useState<SystemMetrics | null>(null);
+  const [theme, setTheme] = useState<Theme>(readStoredTheme);
 
-  const fetchProfiles = async () => {
+  // Sync the theme class on <html> (drives CSS variables + `dark:` variant) and persist it.
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.toggle('light', theme === 'light');
+    root.classList.toggle('dark', theme === 'dark');
     try {
-      const data = await ProfileAPI.getProfiles();
-      setProfiles(data);
-      if (data.length > 0 && !selectedProfile) {
-        setSelectedProfile(data[0]);
-      }
-    } catch (e) {
-      console.warn('Could not fetch profiles:', e);
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // storage unavailable (e.g. privacy mode) — theme still applies for this session
     }
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme(prev => (prev === 'dark' ? 'light' : 'dark'));
   };
 
-  const fetchMetrics = async () => {
-    try {
-      const m = await MonitoringAPI.getMetrics();
-      setSystemMetrics(m);
-    } catch (e) {
-      console.warn('Could not fetch metrics:', e);
-    }
-  };
+  const fetchProfiles = useCallback(
+    () =>
+      ProfileAPI.getProfiles()
+        .then((data) => {
+          setProfiles(data);
+          if (data.length > 0) {
+            setSelectedProfile(prev => prev ?? data[0]);
+          }
+        })
+        .catch((e: unknown) => console.warn('Could not fetch profiles:', e)),
+    []
+  );
+
+  const fetchMetrics = useCallback(
+    () =>
+      MonitoringAPI.getMetrics()
+        .then((m) => setSystemMetrics(m))
+        .catch((e: unknown) => console.warn('Could not fetch metrics:', e)),
+    []
+  );
 
   useEffect(() => {
     fetchProfiles();
     fetchMetrics();
     const interval = setInterval(fetchMetrics, 4000);
     return () => clearInterval(interval);
-  }, []);
+  }, [fetchProfiles, fetchMetrics]);
 
   return (
-    <div className="flex min-h-screen bg-[#0a0c16] text-slate-100 font-sans antialiased selection:bg-purple-600 selection:text-white">
+    <div 
+      className="flex min-h-screen font-sans antialiased selection:bg-purple-600 selection:text-white transition-colors duration-200"
+      style={{
+        backgroundColor: 'var(--bg-page)',
+        color: 'var(--text-primary)'
+      }}
+    >
       {/* Sidebar */}
       <Sidebar 
         currentTab={currentTab} 
@@ -64,6 +99,8 @@ export function App() {
           currentTab={currentTab} 
           setCurrentTab={setCurrentTab} 
           systemMetrics={systemMetrics} 
+          theme={theme}
+          toggleTheme={toggleTheme}
         />
 
         <main className="flex-1 pb-16">

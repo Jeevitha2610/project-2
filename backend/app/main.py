@@ -4,6 +4,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+try:
+    import static_ffmpeg
+    static_ffmpeg.add_paths()
+except Exception:
+    pass
+
 from backend.app.core.config import settings, REFERENCES_DIR, OUTPUTS_DIR
 from backend.app.database.session import init_db, SessionLocal
 from backend.app.database.models import VoiceProfile
@@ -74,7 +80,7 @@ def health_check():
     return {
         "status": "online",
         "version": settings.VERSION,
-        "engine": "IndicF5 (English)",
+        "engine": "F5-TTS v1 (English)",
         "device": "CPU"
     }
 

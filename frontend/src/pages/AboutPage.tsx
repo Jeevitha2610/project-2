@@ -1,7 +1,7 @@
-import React from 'react';
+import type { FC } from 'react';
 import { Info, ShieldCheck, Layers } from 'lucide-react';
 
-export const AboutPage: React.FC = () => {
+export const AboutPage: FC = () => {
   return (
     <div className="p-8 max-w-[1400px] mx-auto space-y-6">
       <div>

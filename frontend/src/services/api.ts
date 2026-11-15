@@ -47,6 +47,15 @@ export const SynthesisAPI = {
     const res = await api.get('/synthesis/history');
     return res.data;
   },
+  getProgress: async (): Promise<{
+    is_running: boolean;
+    percent: number;
+    stage: string;
+    elapsed_seconds: number;
+  }> => {
+    const res = await api.get('/synthesis/progress');
+    return res.data;
+  },
   deleteGeneration: async (id: string): Promise<void> => {
     await api.delete(`/synthesis/history/${id}`);
   },
