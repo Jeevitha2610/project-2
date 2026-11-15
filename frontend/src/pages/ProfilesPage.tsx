@@ -19,13 +19,15 @@ export const ProfilesPage: FC<ProfilesPageProps> = ({ profiles, onRefresh, onSel
 
   const handleCreate = async (e: FormEvent) => {
     e.preventDefault();
-    if (!name || !transcript || !file) {
-      alert("Please enter Name, Reference Transcript, and select an audio file.");
+    if (!name || !file) {
+      alert("Please enter Name and select an audio file.");
       return;
     }
     const formData = new FormData();
     formData.append('name', name);
-    formData.append('reference_transcript', transcript);
+    if (transcript.trim()) {
+      formData.append('reference_transcript', transcript);
+    }
     formData.append('description', desc);
     formData.append('audio_file', file);
 
@@ -162,13 +164,14 @@ export const ProfilesPage: FC<ProfilesPageProps> = ({ profiles, onRefresh, onSel
               </div>
 
               <div>
-                <label className="block font-medium mb-1" style={{ color: 'var(--text-primary)' }}>Reference Transcript *</label>
+                <label className="block font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
+                  Reference Transcript <span className="text-xs text-slate-400 font-normal">(Optional - auto-transcribed via Whisper if blank)</span>
+                </label>
                 <textarea
-                  required
                   rows={3}
                   value={transcript}
                   onChange={(e) => setTranscript(e.target.value)}
-                  placeholder="Exact text spoken in the audio file"
+                  placeholder="Leave empty to auto-transcribe with Whisper, or specify exact text"
                   className="w-full rounded-xl p-2.5 border focus:outline-none focus:border-purple-500 resize-none"
                   style={{
                     backgroundColor: 'var(--bg-card-inner)',

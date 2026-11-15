@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 class VoiceProfileBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     description: Optional[str] = None
-    reference_transcript: str = Field(..., min_length=1)
+    reference_transcript: Optional[str] = ""
     model_compatibility: str = "IndicF5 (English)"
 
 class VoiceProfileCreate(VoiceProfileBase):

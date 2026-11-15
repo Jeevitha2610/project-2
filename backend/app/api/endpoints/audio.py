@@ -1,6 +1,7 @@
 import shutil
 import uuid
 from pathlib import Path
+import soundfile as sf
 from fastapi import APIRouter, UploadFile, File, HTTPException
 
 from backend.app.core.config import REFERENCES_DIR
@@ -34,10 +35,26 @@ def upload_audio(file: UploadFile = File(...)):
 
 @router.post("/transcribe")
 def transcribe_audio(file: UploadFile = File(...)):
-    """Local ASR transcription helper for reference audio."""
-    # Simulated high-accuracy local ASR transcription
-    return {
-        "transcript": "This is a reference sentence spoken by me.",
-        "confidence": 0.98,
-        "language": "en"
-    }
+    """Local ASR transcription helper using faster-whisper."""
+    temp_filename = f"temp_{uuid.uuid4().hex[:8]}_{file.filename}"
+    temp_path = REFERENCES_DIR / temp_filename
+    with open(temp_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    try:
+        data, sr = sf.read(str(temp_path))
+        result = AudioProcessor.transcribe_audio(data, sr)
+        return {
+            "transcript": result["transcript"],
+            "confidence": result.get("language_probability", 0.98),
+            "language": result.get("language", "en"),
+            "segments": result.get("segments", [])
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Transcription failed: {str(e)}")
+    finally:
+        if temp_path.exists():
+            try:
+                temp_path.unlink()
+            except Exception:
+                pass

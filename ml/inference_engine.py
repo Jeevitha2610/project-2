@@ -51,6 +51,7 @@ from backend.app.audio.processor import AudioProcessor
 from backend.app.core.config import OUTPUTS_DIR
 from backend.app.evaluation.metrics import compute_cer, compute_speaker_similarity, compute_wer
 from ml.model_config import default_model_config
+from ml.reference_cache import reference_cache
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from f5_tts.api import F5TTS  # type: ignore[import-not-found, unused-ignore]
@@ -196,8 +197,23 @@ class VoiceCloningEngine:
         temperature: float,
         seed: Optional[int],
     ) -> Tuple[np.ndarray, int]:
+        # Retrieve from reference cache if available
+        cached_ref = reference_cache.get(ref_audio_path)
+        if cached_ref is not None:
+            effective_ref_path = cached_ref["cleaned_path"]
+            effective_ref_text = cached_ref.get("transcript") or ref_transcript
+        else:
+            effective_ref_path = str(ref_audio_path)
+            effective_ref_text = ref_transcript
+            # Populate cache
+            reference_cache.set(
+                audio_path=ref_audio_path,
+                cleaned_path=ref_audio_path,
+                transcript=ref_transcript,
+            )
+
         # Clean reference transcript: ensure proper punctuation and trailing space
-        clean_ref = ref_transcript.strip()
+        clean_ref = effective_ref_text.strip()
         if not clean_ref.endswith((".", "!", "?", ",")):
             clean_ref += "."
         clean_ref += " "
@@ -208,7 +224,7 @@ class VoiceCloningEngine:
         buffered_target = ", " + clean_target
 
         infer_kwargs: Dict[str, Any] = {
-            "ref_file": str(ref_audio_path),
+            "ref_file": str(effective_ref_path),
             "ref_text": clean_ref,
             "gen_text": buffered_target,
             "show_info": _silent_info,

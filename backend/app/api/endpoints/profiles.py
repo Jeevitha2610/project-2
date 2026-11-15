@@ -11,16 +11,16 @@ router = APIRouter()
 @router.post("/", response_model=VoiceProfileResponse)
 def create_profile(
     name: str = Form(...),
-    reference_transcript: str = Form(...),
-    description: Optional[str] = Form(None),
     audio_file: UploadFile = File(...),
+    reference_transcript: Optional[str] = Form(None),
+    description: Optional[str] = Form(None),
     db: Session = Depends(get_db)
 ):
     profile = ProfileService.create_profile(
         db=db,
         name=name,
-        reference_transcript=reference_transcript,
         audio_file=audio_file,
+        reference_transcript=reference_transcript,
         description=description
     )
     profile.reference_audio_url = f"/data/references/{profile.reference_audio_name}"
@@ -30,7 +30,6 @@ def create_profile(
 def get_profiles(db: Session = Depends(get_db)):
     profiles = ProfileService.get_profiles(db)
     for p in profiles:
-        import os
         from pathlib import Path
         filename = Path(p.reference_audio_path).name
         p.reference_audio_url = f"/data/references/{filename}"

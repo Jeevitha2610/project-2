@@ -16,7 +16,7 @@ import {
   XCircle
 } from 'lucide-react';
 import type { VoiceProfile, GenerationJob, SystemMetrics } from '../types';
-import { SynthesisAPI, ProfileAPI, AudioAPI } from '../services/api';
+import { SynthesisAPI, ProfileAPI } from '../services/api';
 import { WaveAnimation } from '../components/WaveAnimation';
 
 interface StudioPageProps {
@@ -162,10 +162,8 @@ export const StudioPage: React.FC<StudioPageProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      await AudioAPI.uploadAudio(file);
       const formData = new FormData();
       formData.append('name', `Voice_${Date.now().toString().slice(-4)}`);
-      formData.append('reference_transcript', referenceTranscript);
       formData.append('audio_file', file);
       const newP = await ProfileAPI.createProfile(formData);
       onRefreshProfiles();
@@ -319,26 +317,31 @@ export const StudioPage: React.FC<StudioPageProps> = ({
                 </div>
               </div>
 
-              {/* Reference Transcript Editor */}
+              {/* Auto-Transcribed Reference Text */}
               <div className="space-y-1.5">
-                <label className="text-xs font-semibold block" style={{ color: 'var(--text-primary)' }}>
-                  Reference Transcript <span className="text-rose-400">*</span>
-                </label>
-                <textarea
-                  value={referenceTranscript}
-                  onChange={(e) => setReferenceTranscript(e.target.value)}
-                  maxLength={500}
-                  rows={4}
-                  className="w-full rounded-xl p-3 text-xs focus:outline-none focus:border-purple-500 transition-colors resize-none font-sans leading-relaxed border"
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold block" style={{ color: 'var(--text-primary)' }}>
+                    Reference Transcript
+                  </label>
+                  <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                    Auto-Transcribed with Whisper
+                  </span>
+                </div>
+                <div
+                  className="w-full rounded-xl p-3 text-xs font-sans leading-relaxed border select-text min-h-[72px]"
                   style={{
                     backgroundColor: 'var(--bg-card-inner)',
                     borderColor: 'var(--border-inner)',
                     color: 'var(--text-primary)'
                   }}
-                  placeholder="This is a reference sentence spoken by me."
-                />
-                <div className="text-right text-[11px] font-mono" style={{ color: 'var(--text-muted)' }}>
-                  {referenceTranscript.length} / 500
+                >
+                  {referenceTranscript || (
+                    <span className="italic text-slate-500">Auto-transcribed text will appear here...</span>
+                  )}
+                </div>
+                <div className="flex justify-between items-center text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  <span>Sentence-aligned to prevent initial word clipping</span>
+                  <span className="font-mono">{referenceTranscript.length} chars</span>
                 </div>
               </div>
             </div>

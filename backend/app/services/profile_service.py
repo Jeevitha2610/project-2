@@ -16,8 +16,8 @@ class ProfileService:
     def create_profile(
         db: Session,
         name: str,
-        reference_transcript: str,
         audio_file: UploadFile,
+        reference_transcript: Optional[str] = None,
         description: Optional[str] = None
     ) -> VoiceProfile:
         # Check name uniqueness
@@ -25,34 +25,50 @@ class ProfileService:
         if existing:
             raise HTTPException(status_code=400, detail=f"Voice profile with name '{name}' already exists.")
 
-        # Save audio file
-        file_ext = Path(audio_file.filename).suffix.lower()
-        if not file_ext:
-            file_ext = ".wav"
-        safe_filename = f"{uuid.uuid4().hex[:12]}_{audio_file.filename}"
-        dest_path = REFERENCES_DIR / safe_filename
+        # Save audio file to temp/raw path
+        raw_filename = f"raw_{uuid.uuid4().hex[:12]}_{audio_file.filename}"
+        raw_path = REFERENCES_DIR / raw_filename
         
-        with open(dest_path, "wb") as buffer:
+        with open(raw_path, "wb") as buffer:
             shutil.copyfileobj(audio_file.file, buffer)
 
-        # Inspect and validate audio
+        # Process reference audio: convert to mono, denoise, normalize loudness,
+        # auto-transcribe with Whisper, trim to clean sentence boundary (6-10s) + trailing silence
+        clean_filename = f"ref_{uuid.uuid4().hex[:10]}.wav"
+        clean_path = REFERENCES_DIR / clean_filename
+
         try:
-            audio_info = AudioProcessor.inspect_audio(dest_path)
+            processed_info = AudioProcessor.process_reference_audio(
+                input_path=raw_path,
+                output_path=clean_path,
+                target_sr=24000,
+                target_duration_range=(6.0, 10.0),
+                trailing_silence_s=0.15
+            )
+            # Remove temporary raw file
+            if raw_path.exists():
+                os.remove(raw_path)
         except Exception as e:
-            if dest_path.exists():
-                os.remove(dest_path)
-            raise HTTPException(status_code=400, detail=f"Invalid or corrupted audio file: {str(e)}")
+            if raw_path.exists():
+                os.remove(raw_path)
+            if clean_path.exists():
+                os.remove(clean_path)
+            raise HTTPException(status_code=400, detail=f"Failed to process and transcribe reference audio: {str(e)}")
+
+        final_transcript = processed_info.get("transcript", "").strip()
+        if not final_transcript and reference_transcript:
+            final_transcript = reference_transcript.strip()
 
         profile = VoiceProfile(
             name=name,
             description=description,
-            reference_audio_path=str(dest_path),
-            reference_audio_name=audio_file.filename,
-            reference_transcript=reference_transcript,
-            duration_seconds=audio_info["duration_seconds"],
-            sample_rate=audio_info["sample_rate"],
-            channels=audio_info["channels"],
-            audio_format=audio_info["format"]
+            reference_audio_path=str(clean_path),
+            reference_audio_name=clean_filename,
+            reference_transcript=final_transcript,
+            duration_seconds=processed_info["duration_seconds"],
+            sample_rate=processed_info["sample_rate"],
+            channels=processed_info["channels"],
+            audio_format="wav"
         )
         db.add(profile)
         db.commit()
@@ -74,7 +90,6 @@ class ProfileService:
             raise HTTPException(status_code=404, detail="Profile not found")
         
         if update_data.name is not None:
-            # check conflict
             conflict = db.query(VoiceProfile).filter(VoiceProfile.name == update_data.name, VoiceProfile.id != profile_id).first()
             if conflict:
                 raise HTTPException(status_code=400, detail=f"Profile name '{update_data.name}' already taken")
