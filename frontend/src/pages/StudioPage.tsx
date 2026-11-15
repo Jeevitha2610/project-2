@@ -38,7 +38,10 @@ export const StudioPage: React.FC<StudioPageProps> = ({
   const [referenceTranscript, setReferenceTranscript] = useState('Where there is righteousness in the heart, there is beauty in the character.');
   const [speechSpeed, setSpeechSpeed] = useState(1.0);
   const [pitch, setPitch] = useState(0.0);
-  const [temperature, setTemperature] = useState(0.7);
+  const [seed, setSeed] = useState<number | undefined>(42);
+  const [isRandomSeed, setIsRandomSeed] = useState(false);
+  const [mode, setMode] = useState<'draft' | 'final'>('draft');
+  const [consentGiven, setConsentGiven] = useState(true);
   const [outputFormat, setOutputFormat] = useState('WAV (Lossless)');
   const [isGenerating, setIsGenerating] = useState(false);
   const [progressPercent, setProgressPercent] = useState(0);
@@ -121,8 +124,11 @@ export const StudioPage: React.FC<StudioPageProps> = ({
         target_text: targetText,
         speech_speed: speechSpeed,
         pitch: pitch,
-        temperature: temperature,
+        temperature: 0.7,
+        seed: isRandomSeed ? undefined : seed,
         output_format: outputFormat,
+        mode: mode,
+        consent_given: consentGiven,
         reference_transcript: referenceTranscript
       }, controller.signal);
       clearInterval(pollInterval);
@@ -386,11 +392,11 @@ export const StudioPage: React.FC<StudioPageProps> = ({
                 </div>
               </div>
 
-              {/* Sliders with Colored Gradient Tracks matching Image 1 */}
+              {/* Controls: Speech Speed, Pitch (Experimental), Seed & Mode */}
               <div className="space-y-3 pt-1">
                 {/* Speech Speed */}
                 <div className="flex items-center justify-between gap-3 text-xs">
-                  <span className="font-medium w-24" style={{ color: 'var(--text-primary)' }}>Speech Speed</span>
+                  <span className="font-medium w-32" style={{ color: 'var(--text-primary)' }}>Speech Speed</span>
                   <input
                     type="range"
                     min="0.5"
@@ -415,9 +421,12 @@ export const StudioPage: React.FC<StudioPageProps> = ({
                   </div>
                 </div>
 
-                {/* Pitch */}
+                {/* Pitch (Marked Experimental with Tooltip Warning) */}
                 <div className="flex items-center justify-between gap-3 text-xs">
-                  <span className="font-medium w-24" style={{ color: 'var(--text-primary)' }}>Pitch</span>
+                  <div className="flex items-center gap-1.5 w-32" title="Experimental: Pitch shifting is applied post-vocoder and may degrade voice similarity">
+                    <span className="font-medium" style={{ color: 'var(--text-primary)' }}>Pitch</span>
+                    <span className="text-[10px] text-amber-400 bg-amber-500/10 px-1 py-0.2 rounded border border-amber-500/20 font-mono">exp</span>
+                  </div>
                   <input
                     type="range"
                     min="-5.0"
@@ -442,41 +451,90 @@ export const StudioPage: React.FC<StudioPageProps> = ({
                   </div>
                 </div>
 
-                {/* Temperature */}
+                {/* Seed Control (Replaces Temperature) */}
                 <div className="flex items-center justify-between gap-3 text-xs">
-                  <span className="font-medium w-24" style={{ color: 'var(--text-primary)' }}>Temperature</span>
-                  <input
-                    type="range"
-                    min="0.1"
-                    max="1.5"
-                    step="0.05"
-                    value={temperature}
-                    onChange={(e) => setTemperature(parseFloat(e.target.value))}
-                    className="flex-1"
-                    style={{
-                      background: `linear-gradient(to right, #06b6d4 0%, #6366f1 ${((temperature - 0.1) / 1.4) * 100}%, #1e2440 ${((temperature - 0.1) / 1.4) * 100}%, #1e2440 100%)`
-                    }}
-                  />
-                  <div
-                    className="px-2.5 py-1 rounded-lg font-mono text-[11px] min-w-[42px] text-center border font-semibold"
-                    style={{
-                      backgroundColor: 'var(--bg-card-inner)',
-                      borderColor: 'var(--border-inner)',
-                      color: 'var(--text-primary)'
-                    }}
-                  >
-                    {temperature.toFixed(2)}
+                  <span className="font-medium w-32" style={{ color: 'var(--text-primary)' }}>Seed</span>
+                  <div className="flex items-center gap-2 flex-1">
+                    <input
+                      type="number"
+                      disabled={isRandomSeed}
+                      value={isRandomSeed ? '' : (seed ?? 42)}
+                      onChange={(e) => setSeed(parseInt(e.target.value) || 0)}
+                      placeholder={isRandomSeed ? "Randomized" : "Seed (e.g. 42)"}
+                      className="flex-1 rounded-lg px-2.5 py-1 text-xs font-mono border focus:outline-none focus:border-purple-500 disabled:opacity-50"
+                      style={{
+                        backgroundColor: 'var(--bg-card-inner)',
+                        borderColor: 'var(--border-inner)',
+                        color: 'var(--text-primary)'
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setIsRandomSeed(!isRandomSeed)}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-colors cursor-pointer ${
+                        isRandomSeed
+                          ? 'bg-purple-600/30 text-purple-300 border-purple-500/40'
+                          : 'hover:bg-slate-700/40 text-slate-400 border-slate-700'
+                      }`}
+                    >
+                      {isRandomSeed ? "Randomized" : "Fixed Seed"}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Synthesis Mode: Draft vs Final */}
+                <div className="flex items-center justify-between gap-3 text-xs pt-0.5">
+                  <span className="font-medium w-32" style={{ color: 'var(--text-primary)' }}>Quality Mode</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setMode('draft')}
+                      className={`px-3 py-1 rounded-lg text-xs font-medium border transition-colors cursor-pointer ${
+                        mode === 'draft'
+                          ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 font-semibold'
+                          : 'text-slate-400 border-slate-700 hover:bg-slate-800/40'
+                      }`}
+                      title="Draft mode (10 ODE steps) for fast previews"
+                    >
+                      Draft (10 Steps)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMode('final')}
+                      className={`px-3 py-1 rounded-lg text-xs font-medium border transition-colors cursor-pointer ${
+                        mode === 'final'
+                          ? 'bg-purple-500/20 text-purple-300 border-purple-500/40 font-semibold'
+                          : 'text-slate-400 border-slate-700 hover:bg-slate-800/40'
+                      }`}
+                      title="Final mode (18 ODE steps) for export quality"
+                    >
+                      Final (18 Steps)
+                    </button>
                   </div>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Centered Spanning Primary CTA Button & Live Progress Indicator */}
+          {/* Centered Spanning Primary CTA Button, Safety Consent & Live Progress */}
           <div className="flex flex-col items-center pt-1 space-y-3">
+            {/* Safety & Consent Checkbox */}
+            <div className="flex items-center justify-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                id="consentCheckbox"
+                checked={consentGiven}
+                onChange={(e) => setConsentGiven(e.target.checked)}
+                className="rounded border-slate-600 text-purple-600 focus:ring-purple-500 cursor-pointer"
+              />
+              <label htmlFor="consentCheckbox" className="cursor-pointer select-none" style={{ color: 'var(--text-secondary)' }}>
+                I confirm I have the rights/consent to clone this voice.
+              </label>
+            </div>
+
             <button
               onClick={handleGenerate}
-              disabled={isGenerating || !targetText.trim()}
+              disabled={isGenerating || !targetText.trim() || !consentGiven}
               className="w-full max-w-[540px] py-3.5 px-8 rounded-full generate-cta-glow text-white font-bold text-[15px] flex items-center justify-center gap-3 disabled:opacity-50 cursor-pointer shadow-xl select-none transition-all"
             >
               {/* Animated Waveform Icon Lines */}
@@ -771,7 +829,7 @@ export const StudioPage: React.FC<StudioPageProps> = ({
             </div>
 
             <div className="grid grid-cols-4 gap-2 text-center">
-              {/* Text Accuracy (1 - WER) */}
+              {/* Word Error Rate (WER) - Honest Whisper Metric */}
               <div
                 className="rounded-xl p-2.5 border transition-colors"
                 style={{
@@ -780,13 +838,12 @@ export const StudioPage: React.FC<StudioPageProps> = ({
                 }}
               >
                 <div className="text-[10px] font-medium leading-tight" style={{ color: 'var(--text-secondary)' }}>
-                  Text Accuracy<br />(WER)
+                  Word Error<br />Rate (WER)
                 </div>
-                <div className="text-lg font-extrabold text-[#00e676] mt-1 font-mono">
-                  {lastJob
-                    ? `${(Math.max(95.4, Math.min(99.2, lastJob.wer > 0.5 ? lastJob.wer * 100 : (1.0 - (lastJob.wer || 0.024)) * 100))).toFixed(1)}%`
-                    : '98.5%'}
+                <div className={`text-lg font-extrabold mt-1 font-mono ${lastJob && lastJob.wer <= 0.08 ? 'text-[#00e676]' : 'text-amber-400'}`}>
+                  {lastJob ? `${(lastJob.wer * 100).toFixed(1)}%` : '--'}
                 </div>
+                <div className="text-[9px] text-slate-500 mt-0.5">Whisper int8</div>
               </div>
 
               {/* Character Error Rate (CER) */}
@@ -801,13 +858,12 @@ export const StudioPage: React.FC<StudioPageProps> = ({
                   Character Error<br />Rate (CER)
                 </div>
                 <div className="text-lg font-extrabold text-[#00e676] mt-1 font-mono">
-                  {lastJob
-                    ? `${(Math.min(3.2, Math.max(0.6, (lastJob.cer && lastJob.cer < 0.2 ? lastJob.cer * 100 : 1.4)))).toFixed(1)}%`
-                    : '1.2%'}
+                  {lastJob ? `${(lastJob.cer * 100).toFixed(1)}%` : '--'}
                 </div>
+                <div className="text-[9px] text-slate-500 mt-0.5">Levenshtein</div>
               </div>
 
-              {/* Speaker Similarity */}
+              {/* Speaker Similarity - Honest ECAPA-TDNN Cosine Similarity */}
               <div
                 className="rounded-xl p-2.5 border transition-colors"
                 style={{
@@ -819,13 +875,12 @@ export const StudioPage: React.FC<StudioPageProps> = ({
                   Speaker<br />Similarity
                 </div>
                 <div className="text-lg font-extrabold text-[#00e676] mt-1 font-mono">
-                  {lastJob
-                    ? `${(Math.max(95.2, Math.min(98.8, lastJob.speaker_similarity <= 1.0 ? lastJob.speaker_similarity * 100 : lastJob.speaker_similarity))).toFixed(1)}%`
-                    : '97.8%'}
+                  {lastJob ? `${(lastJob.speaker_similarity * 100).toFixed(1)}%` : '--'}
                 </div>
+                <div className="text-[9px] text-slate-500 mt-0.5">ECAPA-TDNN</div>
               </div>
 
-              {/* Audio Duration */}
+              {/* Real-Time Factor (RTF) */}
               <div
                 className="rounded-xl p-2.5 border transition-colors"
                 style={{
@@ -834,13 +889,54 @@ export const StudioPage: React.FC<StudioPageProps> = ({
                 }}
               >
                 <div className="text-[10px] font-medium leading-tight" style={{ color: 'var(--text-secondary)' }}>
-                  Audio<br />Duration
+                  Real-Time<br />Factor (RTF)
                 </div>
                 <div className="text-lg font-extrabold mt-1 font-mono" style={{ color: 'var(--text-primary)' }}>
-                  {lastJob ? `${lastJob.duration_seconds.toFixed(1)} s` : '6.0 s'}
+                  {lastJob
+                    ? `${(lastJob.rtf || (lastJob.duration_seconds > 0 ? lastJob.inference_time_seconds / lastJob.duration_seconds : 0)).toFixed(2)}x`
+                    : '--'}
+                </div>
+                <div className="text-[9px] text-slate-500 mt-0.5 font-mono">
+                  {lastJob ? `${lastJob.inference_time_seconds.toFixed(1)}s` : ''}
                 </div>
               </div>
             </div>
+
+            {/* Completeness Gate Per-Chunk Metrics Breakdown */}
+            {lastJob?.chunk_metrics && lastJob.chunk_metrics.length > 0 && (
+              <div className="pt-2 border-t border-[var(--border-inner)] space-y-1.5 text-left">
+                <div className="flex items-center justify-between text-[11px] font-semibold text-slate-400">
+                  <span>Completeness Gate ({lastJob.chunk_metrics.length} {lastJob.chunk_metrics.length === 1 ? 'chunk' : 'chunks'})</span>
+                  <span className="font-mono text-[10px]">
+                    Total retries: {lastJob.total_retries ?? 0}
+                  </span>
+                </div>
+                <div className="space-y-1 max-h-24 overflow-y-auto pr-1">
+                  {lastJob.chunk_metrics.map((cm, ci) => (
+                    <div
+                      key={ci}
+                      className="flex items-center justify-between text-[11px] rounded-lg px-2.5 py-1 font-mono"
+                      style={{
+                        backgroundColor: 'var(--bg-card)',
+                        borderColor: 'var(--border-card)'
+                      }}
+                    >
+                      <span className="truncate max-w-[180px] text-slate-300">
+                        #{ci + 1}: "{cm.text}"
+                      </span>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className={`text-[10px] ${cm.wer <= 0.08 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                          WER: {(cm.wer * 100).toFixed(1)}%
+                        </span>
+                        <span className="text-[10px] text-slate-400">
+                          {cm.retries === 0 ? '✓ 1st try' : `⟳ ${cm.retries} ${cm.retries === 1 ? 'retry' : 'retries'}`}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
