@@ -1,0 +1,4 @@
+filename,speaker_id,speaker_name,gender,dataset,sample_rate,duration_sec,transcript
+librispeech_male_1.wav,1089,Peter Bobbe,male,LibriSpeech test-clean,24000,10.44,HE HOPED THERE WOULD BE STEW FOR DINNER TURNIPS AND CARROTS AND BRUISED POTATOES AND FAT MUTTON PIECES TO BE LADLED OUT IN THICK EBBING DELICIOUS GRAVY
+librispeech_female_1.wav,121,Nikolle Doolin,female,LibriSpeech test-clean,24000,8.46,ALSO A POPULAR CONTRIVANCE WHEREBY LOVE MAKING MAY BE SUSPENDED BUT NOT STOPPED DURING THE PICNIC SEASON
+ljspeech_female_1.wav,LJ001,Linda Johnson,female,LJSpeech-1.1,24000,9.65,"Printing, in the only sense with which we are at present concerned, differs from most if not from all the arts and crafts represented in the Exhibition"
