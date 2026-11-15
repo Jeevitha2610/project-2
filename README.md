@@ -111,5 +111,10 @@ npm run build
 
 ---
 
-## Ethical Voice Notice
-VoiceStudio is intended strictly for authorized voice cloning, creative narration, accessibility, and educational research. Always obtain explicit consent from individuals before recording or cloning their voice.
+## Safety and Licensing Notice
+
+> [!IMPORTANT]
+> **F5-TTS Weights Licensing**: The F5-TTS pretrained model weights are licensed under **Creative Commons Attribution-NonCommercial 4.0 International (CC-BY-NC-4.0)**. They are intended strictly for non-commercial research, academic, and evaluation purposes. Application source code is MIT licensed.
+
+- **Ethical Voice Cloning & Consent**: Explicit user consent is mandatory prior to synthesizing speech.
+- **Audit Logging**: Every voice generation automatically records an immutable audit entry in the local SQLite database (`audit_records`) containing generation timestamps, SHA-256 hashes of the reference audio, and SHA-256 hashes of the target text.

@@ -132,6 +132,21 @@ export function App() {
           {currentTab === 'settings' && <SettingsPage />}
           {currentTab === 'about' && <AboutPage />}
         </main>
+
+        {/* Global Footer with CC-BY-NC Non-Commercial Notice */}
+        <footer
+          className="py-2.5 px-6 border-t text-xs flex flex-wrap justify-between items-center gap-2 select-none"
+          style={{
+            backgroundColor: 'var(--bg-card)',
+            borderColor: 'var(--border-card)',
+            color: 'var(--text-muted)'
+          }}
+        >
+          <span>VoiceStudio &bull; Local-first Neural Voice Cloning</span>
+          <span className="font-mono text-[11px] text-amber-400 bg-amber-500/10 px-2.5 py-0.5 rounded-full border border-amber-500/20">
+            F5-TTS pretrained weights are non-commercial (CC-BY-NC-4.0)
+          </span>
+        </footer>
       </div>
     </div>
   );
