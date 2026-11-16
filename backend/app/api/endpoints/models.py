@@ -41,9 +41,18 @@ async def load_model(model_id: str):
     return {"message": f"Model '{model_id}' loaded for CPU inference."}
 
 
-@router.post("/{model_id}/unload")
-def unload_model(model_id: str):
-    if model_id != ACTIVE_ID:
-        raise HTTPException(status_code=404, detail=f"Unknown model '{model_id}'")
-    voice_cloning_engine.unload()
-    return {"message": f"Model '{model_id}' unloaded from RAM."}
+from pydantic import BaseModel
+from backend.app.core.config import settings
+
+class RemoteGpuRequest(BaseModel):
+    url: str
+
+@router.post("/remote-gpu")
+def set_remote_gpu(req: RemoteGpuRequest):
+    cleaned = req.url.strip()
+    settings.REMOTE_GPU_URL = cleaned if cleaned else None
+    return {"message": "Remote GPU URL updated", "remote_gpu_url": settings.REMOTE_GPU_URL}
+
+@router.get("/remote-gpu")
+def get_remote_gpu():
+    return {"remote_gpu_url": getattr(settings, "REMOTE_GPU_URL", None)}

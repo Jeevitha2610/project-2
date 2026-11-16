@@ -56,6 +56,27 @@ export const Header: FC<HeaderProps> = ({
 
       {/* Right Metrics & Profile */}
       <div className="flex items-center gap-3">
+        {/* Colab GPU Cloud Badge */}
+        {systemMetrics?.is_colab_connected && (
+          <div 
+            className="flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-semibold border transition-all shadow-sm shadow-purple-500/20"
+            style={{ 
+              backgroundColor: 'var(--bg-card-inner)',
+              borderColor: 'rgba(168, 85, 247, 0.45)',
+              color: 'var(--text-primary)'
+            }}
+            title={`${systemMetrics.gpu_name || 'Tesla T4'} (Colab Cloud Active)`}
+          >
+            <span className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              GPU ({systemMetrics.gpu_name?.includes('T4') ? 'T4' : 'Colab'})
+            </span>
+            <span className="text-purple-400 font-mono font-bold">
+              {systemMetrics.gpu_percent ?? 0}%
+            </span>
+          </div>
+        )}
+
         {/* CPU Badge */}
         <div 
           className="flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-semibold border transition-colors"

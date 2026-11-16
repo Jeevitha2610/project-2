@@ -11,3 +11,8 @@ class SystemMetricsResponse(BaseModel):
     model_name: str
     model_status: str
     queue_length: int
+    gpu_name: Optional[str] = None
+    gpu_percent: Optional[float] = None
+    gpu_vram_used_gb: Optional[float] = None
+    gpu_vram_total_gb: Optional[float] = None
+    is_colab_connected: Optional[bool] = False

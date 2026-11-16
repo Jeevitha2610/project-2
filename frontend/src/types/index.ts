@@ -65,6 +65,11 @@ export interface SystemMetrics {
   model_name: string;
   model_status: string;
   queue_length: number;
+  is_colab_connected?: boolean;
+  gpu_name?: string;
+  gpu_percent?: number;
+  gpu_vram_used_gb?: number;
+  gpu_vram_total_gb?: number;
 }
 
 export interface ModelInfo {
