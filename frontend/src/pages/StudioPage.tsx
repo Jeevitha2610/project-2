@@ -103,12 +103,13 @@ export const StudioPage: React.FC<StudioPageProps> = ({
       try {
         const prog = await SynthesisAPI.getProgress();
         if (prog && typeof prog.percent === 'number' && prog.percent > 0) {
-          // Strictly monotonic progression: never drop backward
-          setProgressPercent(prev => Math.max(prev, prog.percent));
           if (prog.stage) setProgressStage(prog.stage);
+          // Smooth time-based advance so the progress bar never freezes on long chunks
+          const timeBasedEstimate = Math.min(92, Math.round(prog.percent + (92 - prog.percent) * (1.0 - Math.exp(-elapsed / 10.0))));
+          setProgressPercent(prev => Math.max(prev, timeBasedEstimate));
         } else {
-          // Dynamic client interpolation: advances smoothly between poll intervals
-          const estimated = Math.min(85, Math.round(10 + 75 * (1.0 - Math.exp(-elapsed / 12.0))));
+          // Dynamic client interpolation
+          const estimated = Math.min(90, Math.round(10 + 80 * (1.0 - Math.exp(-elapsed / 10.0))));
           setProgressPercent(prev => Math.max(prev, estimated));
         }
       } catch (_) {

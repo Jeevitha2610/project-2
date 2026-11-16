@@ -75,10 +75,12 @@ class ModelAdapter:
             "seed": seed
         }
 
+        voice_cloning_engine._update_progress(15, "Connecting to NVIDIA Tesla T4 GPU in Colab Cloud...")
         res = requests.post(f"{remote_url.rstrip('/')}/synthesize", json=payload, timeout=300)
         if res.status_code != 200:
             raise RuntimeError(f"Remote synthesis failed with status {res.status_code}: {res.text}")
 
+        voice_cloning_engine._update_progress(60, "Audio generated on T4 GPU (32 ODE steps). Receiving stream...")
         data = res.json()
         audio_bytes = base64.b64decode(data["audio_b64"])
 
@@ -91,6 +93,7 @@ class ModelAdapter:
         audio_data, sr = sf.read(str(out_path))
         peak = float(np.max(np.abs(audio_data))) if len(audio_data) > 0 else 0.0
 
+        voice_cloning_engine._update_progress(80, "Verifying audio fidelity & ECAPA speaker similarity...")
         # Calculate honest speaker similarity and transcription locally
         from backend.app.evaluation.metrics import compute_speaker_similarity, compute_wer, compute_cer
         from backend.app.audio.processor import AudioProcessor
