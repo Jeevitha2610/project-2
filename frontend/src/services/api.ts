@@ -12,9 +12,20 @@ export const ProfileAPI = {
     const res = await api.get('/profiles/');
     return res.data;
   },
-  createProfile: async (formData: FormData): Promise<VoiceProfile> => {
+  createProfile: async (
+    formData: FormData,
+    onUploadProgress?: (progress: { loaded: number; total: number; percent: number }) => void
+  ): Promise<VoiceProfile> => {
     const res = await api.post('/profiles/', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: (progressEvent) => {
+        if (onUploadProgress) {
+          const total = progressEvent.total || 0;
+          const loaded = progressEvent.loaded || 0;
+          const percent = total > 0 ? Math.round((loaded * 100) / total) : 0;
+          onUploadProgress({ loaded, total, percent });
+        }
+      },
     });
     return res.data;
   },
@@ -24,6 +35,14 @@ export const ProfileAPI = {
   },
   deleteProfile: async (id: string): Promise<void> => {
     await api.delete(`/profiles/${id}`);
+  },
+  getProcessingProgress: async (): Promise<{ stage: string; percent: number; message: string }> => {
+    try {
+      const res = await api.get('/profiles/progress');
+      return res.data;
+    } catch {
+      return { stage: 'idle', percent: 0, message: '' };
+    }
   },
 };
 
@@ -93,11 +112,22 @@ export const ModelsAPI = {
 };
 
 export const AudioAPI = {
-  uploadAudio: async (file: File) => {
+  uploadAudio: async (
+    file: File,
+    onProgress?: (progress: { loaded: number; total: number; percent: number }) => void
+  ) => {
     const formData = new FormData();
     formData.append('file', file);
     const res = await api.post('/audio/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: (progressEvent) => {
+        if (onProgress) {
+          const total = progressEvent.total || 0;
+          const loaded = progressEvent.loaded || 0;
+          const percent = total > 0 ? Math.round((loaded * 100) / total) : 0;
+          onProgress({ loaded, total, percent });
+        }
+      },
     });
     return res.data;
   },
@@ -108,5 +138,35 @@ export const AudioAPI = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
     return res.data;
+  },
+};
+
+export const FileDownloadAPI = {
+  downloadAudioFile: async (
+    audioUrl: string,
+    filename: string,
+    onProgress?: (progress: { loaded: number; total: number; percent: number }) => void
+  ): Promise<void> => {
+    const fullUrl = audioUrl.startsWith('http') ? audioUrl : `http://127.0.0.1:8000${audioUrl}`;
+    const response = await axios.get(fullUrl, {
+      responseType: 'blob',
+      onDownloadProgress: (progressEvent) => {
+        const total = progressEvent.total || 0;
+        const loaded = progressEvent.loaded || 0;
+        const percent = total > 0 ? Math.round((loaded * 100) / total) : 100;
+        if (onProgress) {
+          onProgress({ loaded, total, percent });
+        }
+      },
+    });
+
+    const blobUrl = window.URL.createObjectURL(new Blob([response.data]));
+    const link = document.createElement('a');
+    link.href = blobUrl;
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    link.parentNode?.removeChild(link);
+    window.URL.revokeObjectURL(blobUrl);
   },
 };

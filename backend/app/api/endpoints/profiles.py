@@ -23,8 +23,13 @@ def create_profile(
         reference_transcript=reference_transcript,
         description=description
     )
-    profile.reference_audio_url = f"/data/references/{profile.reference_audio_name}"
+    profile.reference_audio_url = f"/data/references/{Path(profile.reference_audio_path).name}"
     return profile
+
+@router.get("/progress")
+def get_upload_processing_progress():
+    from backend.app.audio.processor import get_processing_state
+    return get_processing_state()
 
 @router.get("/", response_model=List[VoiceProfileResponse])
 def get_profiles(db: Session = Depends(get_db)):

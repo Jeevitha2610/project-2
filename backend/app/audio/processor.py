@@ -10,6 +10,24 @@ import noisereduce as nr
 
 _whisper_model = None
 
+_reference_processing_state = {
+    "stage": "idle",
+    "percent": 0,
+    "message": ""
+}
+
+def update_processing_state(stage: str, percent: int, message: str):
+    global _reference_processing_state
+    _reference_processing_state = {
+        "stage": stage,
+        "percent": percent,
+        "message": message
+    }
+
+def get_processing_state() -> dict:
+    global _reference_processing_state
+    return dict(_reference_processing_state)
+
 def get_whisper_model():
     """Lazy loader for faster-whisper int8 model."""
     global _whisper_model
@@ -28,8 +46,17 @@ class AudioProcessor:
         if not path.exists():
             raise FileNotFoundError(f"Audio file not found: {file_path}")
         
-        info = sf.info(str(path))
-        data, sr = sf.read(str(path))
+        try:
+            info = sf.info(str(path))
+            data, sr = sf.read(str(path))
+            detected_format = info.format.lower()
+            detected_subtype = info.subtype
+        except Exception:
+            data, sr = librosa.load(str(path), sr=None, mono=False)
+            if data.ndim > 1:
+                data = data.T  # soundfile shape convention (samples, channels)
+            detected_format = path.suffix.lstrip(".").lower() or "wav"
+            detected_subtype = "PCM_16"
         
         # Determine channels and peak amplitude
         if len(data.shape) > 1:
@@ -58,8 +85,8 @@ class AudioProcessor:
             "duration_seconds": round(duration, 2),
             "sample_rate": sr,
             "channels": channels,
-            "format": info.format.lower(),
-            "subtype": info.subtype,
+            "format": detected_format,
+            "subtype": detected_subtype,
             "peak_amplitude": round(peak, 3),
             "clipping_detected": clipping,
             "silence_ratio": round(silence_ratio, 3),
@@ -142,7 +169,12 @@ class AudioProcessor:
         5. Trims to clean sentence boundary (6-10s) with a short trailing silence.
         6. Caches processed audio and mel representation.
         """
-        data, sr = sf.read(str(input_path))
+        try:
+            data, sr = sf.read(str(input_path))
+        except Exception:
+            data, sr = librosa.load(str(input_path), sr=None, mono=False)
+            if data.ndim > 1:
+                data = data.T
         if len(data.shape) > 1:
             data = np.mean(data, axis=1)
 
@@ -151,11 +183,13 @@ class AudioProcessor:
             data = librosa.resample(data, orig_sr=sr, target_sr=target_sr)
             sr = target_sr
 
-        # Denoise & normalize
+        # 1. Denoise & normalize
+        update_processing_state("denoising", 40, "Denoising audio & normalizing loudness to -1dB peak...")
         data = AudioProcessor.denoise(data, sr)
         data = AudioProcessor.normalize_loudness(data, target_peak=0.95)
 
-        # Transcribe with Whisper to detect sentence boundaries
+        # 2. Transcribe with Whisper to detect sentence boundaries
+        update_processing_state("transcribing", 70, "Transcribing speech phonetics & sentence alignment with Whisper...")
         asr_result = AudioProcessor.transcribe_audio(data, sr)
         segments = asr_result["segments"]
 
@@ -231,6 +265,7 @@ class AudioProcessor:
         info = AudioProcessor.inspect_audio(output_p)
         info["transcript"] = selected_text
         info["output_path"] = str(output_p)
+        update_processing_state("ready", 100, "Ready! Voice profile successfully created.")
         return info
 
     @staticmethod
@@ -242,7 +277,12 @@ class AudioProcessor:
         normalize_peak: float = 0.95
     ) -> Dict[str, Any]:
         """Loads audio, converts to mono/target sample rate, normalizes, and saves as WAV."""
-        data, sr = sf.read(str(input_path))
+        try:
+            data, sr = sf.read(str(input_path))
+        except Exception:
+            data, sr = librosa.load(str(input_path), sr=None, mono=False)
+            if data.ndim > 1:
+                data = data.T
         
         # Convert to mono if needed
         if len(data.shape) > 1 and target_channels == 1:

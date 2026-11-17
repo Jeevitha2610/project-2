@@ -13,10 +13,14 @@ import {
   Settings,
   ChevronDown,
   Upload,
-  XCircle
+  XCircle,
+  Loader2,
+  CheckCircle,
+  Check,
+  AlertCircle
 } from 'lucide-react';
 import type { VoiceProfile, GenerationJob, SystemMetrics } from '../types';
-import { SynthesisAPI, ProfileAPI } from '../services/api';
+import { SynthesisAPI, ProfileAPI, FileDownloadAPI } from '../services/api';
 import { WaveAnimation } from '../components/WaveAnimation';
 
 interface StudioPageProps {
@@ -31,7 +35,8 @@ export const StudioPage: React.FC<StudioPageProps> = ({
   profiles,
   selectedProfile,
   setSelectedProfile,
-  onRefreshProfiles
+  onRefreshProfiles,
+  systemMetrics
 }) => {
   // Synthesis Settings State
   const [targetText, setTargetText] = useState('Hello, this is a cloned voice sample generated using VoiceStudio.');
@@ -57,7 +62,45 @@ export const StudioPage: React.FC<StudioPageProps> = ({
 
   // Audio Playback State for Reference Audio
   const [isRefPlaying, setIsRefPlaying] = useState(false);
+  const [refCurrentTime, setRefCurrentTime] = useState(0);
   const refAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Multi-Stage Audio Pipeline State: Uploading (100%) ⟶ Denoising ⟶ Transcribing with Whisper... ⟶ Ready!
+  const [pipelineStage, setPipelineStage] = useState<'idle' | 'uploading' | 'denoising' | 'transcribing' | 'ready'>('idle');
+  const [pipelinePercent, setPipelinePercent] = useState<number>(0);
+  const [pipelineStatus, setPipelineStatus] = useState<string>('');
+  const [pipelineError, setPipelineError] = useState<string | null>(null);
+  const [uploadBytePercent, setUploadBytePercent] = useState<number>(0);
+  const [uploadBytesLoaded, setUploadBytesLoaded] = useState<number>(0);
+  const [uploadBytesTotal, setUploadBytesTotal] = useState<number>(0);
+  const [uploadSuccessMessage, setUploadSuccessMessage] = useState<string | null>(null);
+
+  // Download Progress & Status State
+  const [downloadProgress, setDownloadProgress] = useState<{
+    isDownloading: boolean;
+    percent: number;
+    loaded: number;
+    total: number;
+    status: string;
+  }>({
+    isDownloading: false,
+    percent: 0,
+    loaded: 0,
+    total: 0,
+    status: '',
+  });
+
+  // Reference Transcript Editing & Persistence State
+  const [isSavingTranscript, setIsSavingTranscript] = useState(false);
+  const [transcriptSavedSuccess, setTranscriptSavedSuccess] = useState(false);
+
+  // Compute Device Selection (Auto-detect / CPU / Colab GPU)
+  const [computeDevice, setComputeDevice] = useState<'auto' | 'cpu' | 'remote_gpu'>('auto');
+
+  // Target Text Statistics
+  const targetWordCount = targetText.trim() ? targetText.trim().split(/\s+/).length : 0;
+  const estimatedSpeechDuration = (targetWordCount * 0.28).toFixed(1);
+  const estimatedChunks = Math.max(1, Math.ceil(targetWordCount / 25));
 
   // Auto-reload output audio when a new job arrives
   useEffect(() => {
@@ -65,6 +108,14 @@ export const StudioPage: React.FC<StudioPageProps> = ({
       audioRef.current.load();
     }
   }, [lastJob]);
+
+  // Auto-reload reference audio when selected profile or its audio URL changes
+  useEffect(() => {
+    if (refAudioRef.current) {
+      refAudioRef.current.load();
+      setIsRefPlaying(false);
+    }
+  }, [selectedProfile?.reference_audio_url, selectedProfile?.id]);
 
   // Update transcript when selected profile changes or auto-select first profile
   useEffect(() => {
@@ -168,15 +219,164 @@ export const StudioPage: React.FC<StudioPageProps> = ({
   const handleReferenceUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    const inputElement = e.target;
+    setUploadSuccessMessage(null);
+    setPipelineError(null);
+    setPipelineStage('uploading');
+    setPipelinePercent(10);
+    setUploadBytePercent(0);
+    setUploadBytesLoaded(0);
+    setUploadBytesTotal(file.size);
+    setPipelineStatus(`Stage 1/4: Uploading "${file.name}" (0% - 0.00 MB / ${(file.size / 1024 / 1024).toFixed(2)} MB)...`);
+
+    // Poll server-side conversion status (denoising -> transcribing with Whisper -> ready)
+    let conversionPolling: any = null;
+
     try {
+      if (refAudioRef.current) {
+        refAudioRef.current.pause();
+        refAudioRef.current.currentTime = 0;
+      }
+      setIsRefPlaying(false);
+
+      const baseName = file.name.replace(/\.[^/.]+$/, '').trim() || 'Voice';
+      const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const uniqueName = `${baseName} (${timeStr})`;
+
       const formData = new FormData();
-      formData.append('name', `Voice_${Date.now().toString().slice(-4)}`);
+      formData.append('name', uniqueName);
       formData.append('audio_file', file);
-      const newP = await ProfileAPI.createProfile(formData);
-      onRefreshProfiles();
+
+      // Start polling backend conversion stage after bytes start sending
+      conversionPolling = setInterval(async () => {
+        try {
+          const prog = await ProfileAPI.getProcessingProgress();
+          if (prog && prog.stage) {
+            if (prog.stage === 'denoising') {
+              setPipelineStage('denoising');
+              setPipelinePercent(prev => Math.max(prev, 55));
+              setPipelineStatus(`Stage 2/4: ${prog.message || 'Denoising audio & normalizing loudness to -1dB peak...'}`);
+            } else if (prog.stage === 'transcribing') {
+              setPipelineStage('transcribing');
+              setPipelinePercent(prev => Math.max(prev, 82));
+              setPipelineStatus(`Stage 3/4: ${prog.message || 'Transcribing speech phonetics with Whisper & aligning sentences...'}`);
+            } else if (prog.stage === 'finalizing') {
+              setPipelineStage('transcribing');
+              setPipelinePercent(prev => Math.max(prev, 94));
+              setPipelineStatus(`Stage 3/4: Trimming sentence boundaries & saving clean profile...`);
+            }
+          }
+        } catch (_) {}
+      }, 250);
+
+      const newP = await ProfileAPI.createProfile(formData, (p) => {
+        setUploadBytePercent(p.percent);
+        setUploadBytesLoaded(p.loaded);
+        setUploadBytesTotal(p.total);
+        if (p.percent < 100) {
+          setPipelineStage('uploading');
+          const mappedPercent = Math.min(30, Math.round((p.percent / 100) * 30));
+          setPipelinePercent(mappedPercent);
+          setPipelineStatus(`Stage 1/4: Uploading "${file.name}" (${p.percent}% - ${(p.loaded / 1024 / 1024).toFixed(2)} MB / ${(p.total / 1024 / 1024).toFixed(2)} MB)...`);
+        } else {
+          setUploadBytePercent(100);
+          setPipelineStage('denoising');
+          setPipelinePercent(prev => Math.max(prev, 40));
+          setPipelineStatus(`Stage 2/4: Upload complete (100%) ⟶ Denoising audio & normalizing loudness...`);
+        }
+      });
+      
+      clearInterval(conversionPolling);
+
       setSelectedProfile(newP);
+      setReferenceTranscript(newP.reference_transcript || '');
+      if (onRefreshProfiles) {
+        await onRefreshProfiles();
+      }
+      setSelectedProfile(newP);
+
+      // Stage 4: Ready!
+      setPipelineStage('ready');
+      setPipelinePercent(100);
+      setPipelineStatus(`Stage 4/4: Ready! Voice profile successfully loaded for "${file.name}".`);
+      setUploadSuccessMessage(`Successfully processed "${file.name}"!`);
+
+      setTimeout(() => {
+        setUploadSuccessMessage(null);
+      }, 5000);
     } catch (err: any) {
-      alert(`Upload failed: ${err.response?.data?.detail || err.message}`);
+      if (conversionPolling) clearInterval(conversionPolling);
+      const errMsg = err.response?.data?.detail || err.message;
+      setPipelineStage('idle');
+      setPipelineError(`Upload failed: ${errMsg}`);
+      alert(`Upload failed: ${errMsg}`);
+    } finally {
+      if (conversionPolling) clearInterval(conversionPolling);
+      inputElement.value = '';
+    }
+  };
+
+  const handleSaveTranscript = async () => {
+    if (!selectedProfile) return;
+    setIsSavingTranscript(true);
+    try {
+      await ProfileAPI.updateProfile(selectedProfile.id, {
+        reference_transcript: referenceTranscript,
+      });
+      setTranscriptSavedSuccess(true);
+      if (onRefreshProfiles) {
+        onRefreshProfiles();
+      }
+      setTimeout(() => {
+        setTranscriptSavedSuccess(false);
+      }, 3000);
+    } catch (err: any) {
+      alert(`Failed to save transcript: ${err.response?.data?.detail || err.message}`);
+    } finally {
+      setIsSavingTranscript(false);
+    }
+  };
+
+  const handleDownloadAudio = async () => {
+    if (!lastJob?.output_audio_url) return;
+    const filename = `cloned_voice_${Date.now().toString().slice(-6)}.wav`;
+    setDownloadProgress({
+      isDownloading: true,
+      percent: 0,
+      loaded: 0,
+      total: 0,
+      status: `Starting download of ${filename}...`,
+    });
+
+    try {
+      await FileDownloadAPI.downloadAudioFile(lastJob.output_audio_url, filename, (p) => {
+        setDownloadProgress({
+          isDownloading: true,
+          percent: p.percent,
+          loaded: p.loaded,
+          total: p.total,
+          status: `Downloading ${filename}... ${p.percent}% (${(p.loaded / 1024).toFixed(0)} KB / ${(p.total / 1024).toFixed(0)} KB)`,
+        });
+      });
+      setDownloadProgress({
+        isDownloading: false,
+        percent: 100,
+        loaded: 0,
+        total: 0,
+        status: `Downloaded ${filename} successfully!`,
+      });
+      setTimeout(() => {
+        setDownloadProgress(prev => ({ ...prev, status: '' }));
+      }, 3500);
+    } catch (err: any) {
+      setDownloadProgress({
+        isDownloading: false,
+        percent: 0,
+        loaded: 0,
+        total: 0,
+        status: `Download failed: ${err.message}`,
+      });
     }
   };
 
@@ -226,8 +426,10 @@ export const StudioPage: React.FC<StudioPageProps> = ({
       )}
       {selectedProfile?.reference_audio_url && (
         <audio
+          key={selectedProfile.reference_audio_url}
           ref={refAudioRef}
           src={`http://127.0.0.1:8000${selectedProfile.reference_audio_url}`}
+          onTimeUpdate={() => setRefCurrentTime(refAudioRef.current?.currentTime || 0)}
           onEnded={() => setIsRefPlaying(false)}
         />
       )}
@@ -276,7 +478,170 @@ export const StudioPage: React.FC<StudioPageProps> = ({
                 </label>
               </div>
 
-              {/* Reference Audio Player Pill matching Image 1 */}
+              {/* Multi-Stage Audio Pipeline Stepper: "Uploading (100%) ⟶ Denoising ⟶ Transcribing with Whisper... ⟶ Ready!" */}
+              {pipelineStage !== 'idle' && (() => {
+                const stageIndex = pipelineStage === 'uploading' ? 0 :
+                                   pipelineStage === 'denoising' ? 1 :
+                                   pipelineStage === 'transcribing' ? 2 :
+                                   pipelineStage === 'ready' ? 3 : -1;
+                return (
+                  <div
+                    className="rounded-xl p-3.5 border space-y-3 transition-all shadow-lg animate-in fade-in duration-200"
+                    style={{
+                      backgroundColor: 'var(--bg-card-inner)',
+                      borderColor: pipelineStage === 'ready' ? 'rgba(16, 185, 129, 0.4)' : 'rgba(168, 85, 247, 0.4)'
+                    }}
+                  >
+                    {/* Stepper Steps Row */}
+                    <div className="flex items-center justify-between gap-1 overflow-x-auto py-1 no-scrollbar text-[11px] font-semibold">
+                      {/* Step 1: Uploading */}
+                      <div className={`flex items-center gap-1 px-2 py-1 rounded-lg border transition-all whitespace-nowrap ${
+                        stageIndex > 0 ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' :
+                        stageIndex === 0 ? 'bg-purple-500/20 border-purple-500/50 text-purple-300 ring-1 ring-purple-500/40' :
+                        'bg-slate-800/40 border-slate-700/50 text-slate-500'
+                      }`}>
+                        {stageIndex > 0 ? (
+                          <CheckCircle className="w-3 h-3 text-emerald-400 shrink-0" />
+                        ) : stageIndex === 0 ? (
+                          <Loader2 className="w-3 h-3 animate-spin text-purple-400 shrink-0" />
+                        ) : (
+                          <span className="w-3 h-3 rounded-full border border-slate-600 flex items-center justify-center text-[8px]">1</span>
+                        )}
+                        <span>Uploading ({uploadBytePercent}%)</span>
+                      </div>
+
+                      <span className={`text-xs font-bold transition-colors select-none ${stageIndex >= 1 ? 'text-purple-400' : 'text-slate-600'}`}>⟶</span>
+
+                      {/* Step 2: Denoising */}
+                      <div className={`flex items-center gap-1 px-2 py-1 rounded-lg border transition-all whitespace-nowrap ${
+                        stageIndex > 1 ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' :
+                        stageIndex === 1 ? 'bg-purple-500/20 border-purple-500/50 text-purple-300 ring-1 ring-purple-500/40' :
+                        'bg-slate-800/40 border-slate-700/50 text-slate-500'
+                      }`}>
+                        {stageIndex > 1 ? (
+                          <CheckCircle className="w-3 h-3 text-emerald-400 shrink-0" />
+                        ) : stageIndex === 1 ? (
+                          <Loader2 className="w-3 h-3 animate-spin text-purple-400 shrink-0" />
+                        ) : (
+                          <span className="w-3 h-3 rounded-full border border-slate-600 flex items-center justify-center text-[8px]">2</span>
+                        )}
+                        <span>Denoising</span>
+                      </div>
+
+                      <span className={`text-xs font-bold transition-colors select-none ${stageIndex >= 2 ? 'text-purple-400' : 'text-slate-600'}`}>⟶</span>
+
+                      {/* Step 3: Transcribing with Whisper... */}
+                      <div className={`flex items-center gap-1 px-2 py-1 rounded-lg border transition-all whitespace-nowrap ${
+                        stageIndex > 2 ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' :
+                        stageIndex === 2 ? 'bg-purple-500/20 border-purple-500/50 text-purple-300 ring-1 ring-purple-500/40' :
+                        'bg-slate-800/40 border-slate-700/50 text-slate-500'
+                      }`}>
+                        {stageIndex > 2 ? (
+                          <CheckCircle className="w-3 h-3 text-emerald-400 shrink-0" />
+                        ) : stageIndex === 2 ? (
+                          <Loader2 className="w-3 h-3 animate-spin text-purple-400 shrink-0" />
+                        ) : (
+                          <span className="w-3 h-3 rounded-full border border-slate-600 flex items-center justify-center text-[8px]">3</span>
+                        )}
+                        <span>Transcribing with Whisper...</span>
+                      </div>
+
+                      <span className={`text-xs font-bold transition-colors select-none ${stageIndex >= 3 ? 'text-emerald-400' : 'text-slate-600'}`}>⟶</span>
+
+                      {/* Step 4: Ready! */}
+                      <div className={`flex items-center gap-1 px-2 py-1 rounded-lg border transition-all whitespace-nowrap ${
+                        stageIndex >= 3 ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300 ring-1 ring-emerald-500/40 font-bold' :
+                        'bg-slate-800/40 border-slate-700/50 text-slate-500'
+                      }`}>
+                        {stageIndex >= 3 ? (
+                          <CheckCircle className="w-3 h-3 text-emerald-400 shrink-0" />
+                        ) : (
+                          <span className="w-3 h-3 rounded-full border border-slate-600 flex items-center justify-center text-[8px]">4</span>
+                        )}
+                        <span>Ready!</span>
+                      </div>
+                    </div>
+
+                    {/* Progress Bar & Status Text */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-semibold text-purple-300 flex items-center gap-1.5 truncate max-w-[320px]">
+                          {pipelineStage === 'ready' ? (
+                            <CheckCircle className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                          ) : (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-400 shrink-0" />
+                          )}
+                          <span className="truncate">{pipelineStatus}</span>
+                        </span>
+                        <span className={`font-mono font-bold ml-2 shrink-0 ${pipelineStage === 'ready' ? 'text-emerald-400' : 'text-purple-300'}`}>
+                          {pipelinePercent}%
+                        </span>
+                      </div>
+
+                      <div className="w-full bg-slate-800/80 rounded-full h-2.5 overflow-hidden border border-purple-500/20 shadow-inner">
+                        <div
+                          className={`h-full rounded-full transition-all duration-300 ${
+                            pipelineStage === 'ready'
+                              ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
+                              : 'bg-gradient-to-r from-purple-500 via-indigo-500 to-cyan-400'
+                          }`}
+                          style={{ width: `${pipelinePercent}%` }}
+                        />
+                      </div>
+
+                      <div className="flex justify-between items-center text-[10.5px] text-slate-400 font-mono">
+                        <span>
+                          {uploadBytesTotal > 0
+                            ? `${(uploadBytesLoaded / 1024 / 1024).toFixed(2)} MB / ${(uploadBytesTotal / 1024 / 1024).toFixed(2)} MB`
+                            : 'Audio stream'}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <span>
+                            {pipelineStage === 'uploading' && 'Transferring audio to server...'}
+                            {pipelineStage === 'denoising' && 'Bandpass filter & loudness normalization (-1 dB)...'}
+                            {pipelineStage === 'transcribing' && 'Neural phoneme extraction & Whisper align...'}
+                            {pipelineStage === 'ready' && 'Profile persisted and ready for synthesis!'}
+                          </span>
+                          {pipelineStage === 'ready' && (
+                            <button
+                              onClick={() => setPipelineStage('idle')}
+                              className="text-[10px] text-slate-400 hover:text-white underline cursor-pointer ml-1"
+                            >
+                              Dismiss
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Upload Success Alert */}
+              {uploadSuccessMessage && (
+                <div className="rounded-xl p-2.5 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs flex items-center gap-2">
+                  <CheckCircle className="w-4 h-4 shrink-0 text-emerald-400" />
+                  <span className="truncate">{uploadSuccessMessage}</span>
+                </div>
+              )}
+
+              {/* Upload Error Alert */}
+              {pipelineError && (
+                <div className="rounded-xl p-2.5 bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 truncate">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                    <span className="truncate">{pipelineError}</span>
+                  </div>
+                  <button
+                    onClick={() => setPipelineError(null)}
+                    className="text-xs hover:text-white font-semibold cursor-pointer"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              )}
+
+              {/* Reference Audio Player Pill matching Image 1 with Interactive Waveform Seeking (TODO-2) */}
               <div
                 className="rounded-xl p-3 flex items-center justify-between border transition-colors"
                 style={{
@@ -293,15 +658,30 @@ export const StudioPage: React.FC<StudioPageProps> = ({
                   </button>
                   <div>
                     <div className="text-xs font-semibold truncate max-w-[140px]" style={{ color: 'var(--text-primary)' }}>
-                      {selectedProfile ? selectedProfile.reference_audio_name : 'reference.wav'}
+                      {selectedProfile ? (selectedProfile.reference_audio_name || selectedProfile.name) : 'No file selected'}
                     </div>
-                    {/* Animated Audio Equalizer Bars matching Image 1 */}
-                    <div className="flex items-center gap-0.5 mt-1 h-3.5">
+                    {/* Animated Audio Equalizer Bars with Click-to-Seek */}
+                    <div
+                      className="flex items-center gap-0.5 mt-1 h-3.5 cursor-pointer group"
+                      title="Click along waveform to seek reference audio"
+                      onClick={(e) => {
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+                        const dur = selectedProfile?.duration_seconds || 1;
+                        if (refAudioRef.current) {
+                          refAudioRef.current.currentTime = ratio * dur;
+                          setRefCurrentTime(refAudioRef.current.currentTime);
+                        }
+                      }}
+                    >
                       {[10, 18, 14, 24, 16, 12, 22, 14, 20, 10, 16, 22, 12, 18, 14, 8, 14, 20].map((h, i) => (
                         <div
                           key={i}
-                          className={`w-[2.5px] rounded-full transition-all ${isRefPlaying ? 'bg-cyan-400 animate-wave-bar' : 'bg-blue-400'
-                            }`}
+                          className={`w-[2.5px] rounded-full transition-all ${
+                            i < (refCurrentTime / (selectedProfile?.duration_seconds || 1)) * 18
+                              ? 'bg-cyan-400'
+                              : isRefPlaying ? 'bg-cyan-400/40 animate-wave-bar' : 'bg-blue-400'
+                          }`}
                           style={{
                             height: `${h * 0.55}px`,
                             animationDelay: `${(i % 5) * 0.1}s`
@@ -313,42 +693,80 @@ export const StudioPage: React.FC<StudioPageProps> = ({
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] font-mono" style={{ color: 'var(--text-secondary)' }}>
-                    {selectedProfile ? `00:0${Math.round(selectedProfile.duration_seconds)}` : '00:12'}
+                    {selectedProfile
+                      ? `00:0${Math.floor(refCurrentTime)} / 00:0${Math.round(selectedProfile.duration_seconds)}`
+                      : '00:00'}
                   </span>
                   <button
                     title="Remove Audio"
-                    className="text-slate-400 hover:text-rose-400 transition-colors p-1"
+                    onClick={() => {
+                      if (refAudioRef.current) {
+                        refAudioRef.current.pause();
+                        refAudioRef.current.currentTime = 0;
+                      }
+                      setIsRefPlaying(false);
+                      setRefCurrentTime(0);
+                      setSelectedProfile(null);
+                      setReferenceTranscript('');
+                    }}
+                    className="text-slate-400 hover:text-rose-400 transition-colors p-1 cursor-pointer"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 </div>
               </div>
 
-              {/* Auto-Transcribed Reference Text */}
+              {/* Editable Reference Transcript with In-Place Persistence (TODO-3) */}
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-semibold block" style={{ color: 'var(--text-primary)' }}>
                     Reference Transcript
                   </label>
-                  <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                    Auto-Transcribed with Whisper
-                  </span>
+                  <div className="flex items-center gap-2">
+                    {transcriptSavedSuccess && (
+                      <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
+                        <Check className="w-3 h-3" />
+                        Saved to Profile!
+                      </span>
+                    )}
+                    <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                      Auto-Transcribed with Whisper
+                    </span>
+                  </div>
                 </div>
-                <div
-                  className="w-full rounded-xl p-3 text-xs font-sans leading-relaxed border select-text min-h-[72px]"
+                <textarea
+                  value={referenceTranscript}
+                  onChange={(e) => setReferenceTranscript(e.target.value)}
+                  rows={3}
+                  placeholder="Auto-transcribed text will appear here... you can edit and save corrections."
+                  className="w-full rounded-xl p-3 text-xs font-sans leading-relaxed border focus:outline-none focus:border-purple-500 transition-colors resize-none select-text"
                   style={{
                     backgroundColor: 'var(--bg-card-inner)',
                     borderColor: 'var(--border-inner)',
                     color: 'var(--text-primary)'
                   }}
-                >
-                  {referenceTranscript || (
-                    <span className="italic text-slate-500">Auto-transcribed text will appear here...</span>
-                  )}
-                </div>
+                />
                 <div className="flex justify-between items-center text-[11px]" style={{ color: 'var(--text-muted)' }}>
                   <span>Sentence-aligned to prevent initial word clipping</span>
-                  <span className="font-mono">{referenceTranscript.length} chars</span>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono">{referenceTranscript.length} chars</span>
+                    {selectedProfile && (
+                      <button
+                        type="button"
+                        disabled={isSavingTranscript}
+                        onClick={handleSaveTranscript}
+                        className="px-2.5 py-1 rounded-lg bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 text-[11px] font-semibold flex items-center gap-1 transition-all cursor-pointer disabled:opacity-50"
+                        title="Save edited transcript permanently to SQLite profile"
+                      >
+                        {isSavingTranscript ? (
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <Save className="w-3 h-3" />
+                        )}
+                        Save Transcript
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
@@ -388,8 +806,22 @@ export const StudioPage: React.FC<StudioPageProps> = ({
                   }}
                   placeholder="Hello, this is a cloned voice sample generated using VoiceStudio."
                 />
-                <div className="text-right text-[11px] font-mono" style={{ color: 'var(--text-muted)' }}>
-                  {targetText.length} / 500
+                <div className="flex justify-between items-center text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  <span className="font-mono text-slate-400">
+                    {targetWordCount} words · ~{estimatedSpeechDuration}s duration · {estimatedChunks} chunk{estimatedChunks > 1 ? 's' : ''}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    {targetText && (
+                      <button
+                        type="button"
+                        onClick={() => setTargetText('')}
+                        className="hover:text-rose-400 text-slate-500 transition-colors cursor-pointer text-[10.5px]"
+                      >
+                        Clear
+                      </button>
+                    )}
+                    <span className="font-mono">{targetText.length} / 500</span>
+                  </div>
                 </div>
               </div>
 
@@ -734,6 +1166,52 @@ export const StudioPage: React.FC<StudioPageProps> = ({
               <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-3 pointer-events-none" />
             </div>
           </div>
+
+          {/* Card 4: Compute Engine & Device Selector (TODO-4) */}
+          <div
+            className="rounded-2xl p-4 space-y-3 shadow-xl border transition-colors"
+            style={{
+              backgroundColor: 'var(--bg-card)',
+              borderColor: 'var(--border-card)'
+            }}
+          >
+            <div className="flex items-center justify-between text-xs font-bold" style={{ color: 'var(--text-primary)' }}>
+              <div className="flex items-center gap-2">
+                <Cpu className="w-4 h-4 text-purple-400" />
+                <span>Compute Engine</span>
+              </div>
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border flex items-center gap-1 ${
+                systemMetrics?.gpu_name
+                  ? 'bg-purple-500/10 text-purple-300 border-purple-500/30'
+                  : 'bg-blue-500/10 text-blue-300 border-blue-500/30'
+              }`}>
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                {systemMetrics?.gpu_name ? 'Colab GPU' : 'Intel CPU'}
+              </span>
+            </div>
+            <div className="relative">
+              <select
+                value={computeDevice}
+                onChange={(e) => setComputeDevice(e.target.value as any)}
+                className="w-full rounded-xl px-3.5 py-2.5 text-xs font-medium focus:outline-none focus:border-purple-500 appearance-none pr-8 cursor-pointer border transition-colors"
+                style={{
+                  backgroundColor: 'var(--bg-card-inner)',
+                  borderColor: 'var(--border-inner)',
+                  color: 'var(--text-primary)'
+                }}
+              >
+                <option value="auto">Auto-Detect (Best Available)</option>
+                <option value="cpu">Local CPU (Intel Core i5-13H)</option>
+                <option value="remote_gpu">Google Colab GPU Cloud (T4/A100)</option>
+              </select>
+              <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-3 pointer-events-none" />
+            </div>
+            <div className="text-[10.5px] text-slate-400 leading-tight">
+              {computeDevice === 'remote_gpu' || systemMetrics?.gpu_name
+                ? '⚡ 32 ODE steps on GPU (~4.6s per utterance)'
+                : '💻 10 ODE steps on local physical P-cores'}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -752,6 +1230,37 @@ export const StudioPage: React.FC<StudioPageProps> = ({
           <span>Output & Evaluation</span>
         </div>
 
+        {/* Real-time Download Progress Bar and Status */}
+        {downloadProgress.status && (
+          <div
+            className="rounded-xl p-3 border space-y-1.5 transition-all shadow-sm"
+            style={{
+              backgroundColor: 'var(--bg-card-inner)',
+              borderColor: downloadProgress.isDownloading ? 'rgba(59, 130, 246, 0.4)' : 'rgba(16, 185, 129, 0.4)'
+            }}
+          >
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-semibold text-blue-400 flex items-center gap-1.5 truncate">
+                {downloadProgress.isDownloading ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-400 shrink-0" />
+                ) : (
+                  <CheckCircle className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                )}
+                <span className="truncate">{downloadProgress.status}</span>
+              </span>
+              <span className="font-mono text-blue-300 font-bold ml-2 shrink-0">{downloadProgress.percent}%</span>
+            </div>
+            {downloadProgress.isDownloading && (
+              <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full transition-all duration-150"
+                  style={{ width: `${downloadProgress.percent}%` }}
+                />
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="grid grid-cols-12 gap-5 items-center">
           {/* Left Player Box matching Image 1 */}
           <div
@@ -769,8 +1278,18 @@ export const StudioPage: React.FC<StudioPageProps> = ({
               {isPlaying ? <Pause className="w-5 h-5 fill-white" /> : <Play className="w-5 h-5 fill-white ml-0.5" />}
             </button>
 
-            {/* Detailed Waveform Visualization with Dynamic Active Animation */}
-            <div className="flex-1 flex items-center gap-0.5 h-9 overflow-hidden">
+            {/* Detailed Waveform Visualization with Dynamic Active Seeking (TODO-2) */}
+            <div
+              className="flex-1 flex items-center gap-0.5 h-9 overflow-hidden cursor-pointer group"
+              title="Click along waveform to scrub/seek playback position"
+              onClick={(e) => {
+                if (!lastJob || !audioRef.current) return;
+                const rect = e.currentTarget.getBoundingClientRect();
+                const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+                audioRef.current.currentTime = ratio * (lastJob.duration_seconds || 1);
+                setAudioCurrentTime(audioRef.current.currentTime);
+              }}
+            >
               {[8, 16, 24, 38, 20, 48, 65, 80, 50, 62, 78, 92, 85, 70, 55, 35, 45, 60, 75, 52, 38, 22, 34, 48, 62, 42, 28, 16, 28, 45, 32, 18, 10, 22, 35, 48, 30, 16].map((h, i) => (
                 <div
                   key={i}
@@ -797,14 +1316,19 @@ export const StudioPage: React.FC<StudioPageProps> = ({
                 <Volume2 className="w-4 h-4" />
               </button>
               {lastJob?.output_audio_url && (
-                <a
-                  href={`http://127.0.0.1:8000${lastJob.output_audio_url}`}
-                  download="cloned_voice.wav"
-                  title="Download WAV"
-                  className="hover:text-purple-400 transition-colors p-1"
+                <button
+                  type="button"
+                  onClick={handleDownloadAudio}
+                  disabled={downloadProgress.isDownloading}
+                  title="Download WAV with progress"
+                  className="hover:text-purple-400 transition-colors p-1 cursor-pointer disabled:opacity-40"
                 >
-                  <Download className="w-4 h-4" />
-                </a>
+                  {downloadProgress.isDownloading ? (
+                    <Loader2 className="w-4 h-4 animate-spin text-purple-400" />
+                  ) : (
+                    <Download className="w-4 h-4" />
+                  )}
+                </button>
               )}
               <button
                 title="Share"

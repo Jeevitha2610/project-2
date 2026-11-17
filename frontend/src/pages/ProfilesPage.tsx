@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { FC, FormEvent } from 'react';
-import { Users, Plus, Trash2, CheckCircle, X } from 'lucide-react';
+import { Users, Plus, Trash2, CheckCircle, X, Loader2 } from 'lucide-react';
 import type { VoiceProfile } from '../types';
 import { ProfileAPI } from '../services/api';
 
@@ -16,6 +16,11 @@ export const ProfilesPage: FC<ProfilesPageProps> = ({ profiles, onRefresh, onSel
   const [transcript, setTranscript] = useState('');
   const [desc, setDesc] = useState('');
   const [file, setFile] = useState<File | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [pipelineStage, setPipelineStage] = useState<'idle' | 'uploading' | 'denoising' | 'transcribing' | 'ready'>('idle');
+  const [pipelinePercent, setPipelinePercent] = useState(0);
+  const [uploadBytePercent, setUploadBytePercent] = useState(0);
+  const [pipelineStatus, setPipelineStatus] = useState('');
 
   const handleCreate = async (e: FormEvent) => {
     e.preventDefault();
@@ -31,16 +36,74 @@ export const ProfilesPage: FC<ProfilesPageProps> = ({ profiles, onRefresh, onSel
     formData.append('description', desc);
     formData.append('audio_file', file);
 
+    setIsSaving(true);
+    setPipelineStage('uploading');
+    setPipelinePercent(10);
+    setUploadBytePercent(0);
+    setPipelineStatus(`Stage 1/4: Uploading "${file.name}"...`);
+
+    let conversionPolling: any = null;
+
     try {
-      await ProfileAPI.createProfile(formData);
-      setShowModal(false);
-      setName('');
-      setTranscript('');
-      setDesc('');
-      setFile(null);
-      onRefresh();
+      conversionPolling = setInterval(async () => {
+        try {
+          const prog = await ProfileAPI.getProcessingProgress();
+          if (prog && prog.stage) {
+            if (prog.stage === 'denoising') {
+              setPipelineStage('denoising');
+              setPipelinePercent(prev => Math.max(prev, 55));
+              setPipelineStatus(`Stage 2/4: ${prog.message || 'Denoising audio...'}`);
+            } else if (prog.stage === 'transcribing') {
+              setPipelineStage('transcribing');
+              setPipelinePercent(prev => Math.max(prev, 82));
+              setPipelineStatus(`Stage 3/4: ${prog.message || 'Transcribing with Whisper...'}`);
+            } else if (prog.stage === 'finalizing') {
+              setPipelineStage('transcribing');
+              setPipelinePercent(prev => Math.max(prev, 94));
+              setPipelineStatus(`Stage 3/4: Finalizing voice profile...`);
+            }
+          }
+        } catch (_) {}
+      }, 250);
+
+      await ProfileAPI.createProfile(formData, (p) => {
+        setUploadBytePercent(p.percent);
+        if (p.percent < 100) {
+          setPipelineStage('uploading');
+          const mapped = Math.min(30, Math.round((p.percent / 100) * 30));
+          setPipelinePercent(mapped);
+          setPipelineStatus(`Stage 1/4: Uploading ${p.percent}% (${(p.loaded / 1024 / 1024).toFixed(1)} MB / ${(p.total / 1024 / 1024).toFixed(1)} MB)`);
+        } else {
+          setUploadBytePercent(100);
+          setPipelineStage('denoising');
+          setPipelinePercent(prev => Math.max(prev, 40));
+          setPipelineStatus('Stage 2/4: Upload complete (100%) ⟶ Denoising audio...');
+        }
+      });
+
+      clearInterval(conversionPolling);
+      setPipelineStage('ready');
+      setPipelinePercent(100);
+      setPipelineStatus('Stage 4/4: Ready! Profile created successfully.');
+
+      setTimeout(() => {
+        setShowModal(false);
+        setName('');
+        setTranscript('');
+        setDesc('');
+        setFile(null);
+        setPipelineStage('idle');
+        setPipelinePercent(0);
+        setPipelineStatus('');
+        onRefresh();
+      }, 800);
     } catch (err: any) {
+      if (conversionPolling) clearInterval(conversionPolling);
+      setPipelineStage('idle');
       alert(err.response?.data?.detail || err.message);
+    } finally {
+      if (conversionPolling) clearInterval(conversionPolling);
+      setIsSaving(false);
     }
   };
 
@@ -203,16 +266,96 @@ export const ProfilesPage: FC<ProfilesPageProps> = ({ profiles, onRefresh, onSel
                   type="file"
                   required
                   accept="audio/*"
-                  onChange={(e) => setFile(e.target.files?.[0] || null)}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0] || null;
+                    setFile(f);
+                    if (f && !name) {
+                      setName(f.name.replace(/\.[^/.]+$/, '').trim());
+                    }
+                  }}
                   className="w-full text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-purple-600 file:text-white hover:file:bg-purple-500 cursor-pointer"
                 />
               </div>
 
+              {/* Multi-Stage Audio Pipeline Stepper: "Uploading (100%) ⟶ Denoising ⟶ Transcribing with Whisper... ⟶ Ready!" */}
+              {pipelineStage !== 'idle' && (() => {
+                const stageIndex = pipelineStage === 'uploading' ? 0 :
+                                   pipelineStage === 'denoising' ? 1 :
+                                   pipelineStage === 'transcribing' ? 2 :
+                                   pipelineStage === 'ready' ? 3 : -1;
+                return (
+                  <div
+                    className="rounded-xl p-3 border space-y-2.5 transition-all shadow-md"
+                    style={{
+                      backgroundColor: 'var(--bg-card-inner)',
+                      borderColor: pipelineStage === 'ready' ? 'rgba(16, 185, 129, 0.4)' : 'rgba(168, 85, 247, 0.4)'
+                    }}
+                  >
+                    {/* Stepper Steps Row */}
+                    <div className="flex items-center justify-between gap-1 overflow-x-auto py-0.5 no-scrollbar text-[10.5px] font-semibold">
+                      <span className={`px-2 py-0.5 rounded border whitespace-nowrap ${
+                        stageIndex > 0 ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' :
+                        stageIndex === 0 ? 'bg-purple-500/20 border-purple-500/50 text-purple-300' :
+                        'bg-slate-800/40 border-slate-700/50 text-slate-500'
+                      }`}>
+                        Uploading ({uploadBytePercent}%)
+                      </span>
+                      <span className="text-slate-600 text-xs">⟶</span>
+                      <span className={`px-2 py-0.5 rounded border whitespace-nowrap ${
+                        stageIndex > 1 ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' :
+                        stageIndex === 1 ? 'bg-purple-500/20 border-purple-500/50 text-purple-300' :
+                        'bg-slate-800/40 border-slate-700/50 text-slate-500'
+                      }`}>
+                        Denoising
+                      </span>
+                      <span className="text-slate-600 text-xs">⟶</span>
+                      <span className={`px-2 py-0.5 rounded border whitespace-nowrap ${
+                        stageIndex > 2 ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' :
+                        stageIndex === 2 ? 'bg-purple-500/20 border-purple-500/50 text-purple-300' :
+                        'bg-slate-800/40 border-slate-700/50 text-slate-500'
+                      }`}>
+                        Transcribing with Whisper...
+                      </span>
+                      <span className="text-slate-600 text-xs">⟶</span>
+                      <span className={`px-2 py-0.5 rounded border whitespace-nowrap ${
+                        stageIndex >= 3 ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300 font-bold' :
+                        'bg-slate-800/40 border-slate-700/50 text-slate-500'
+                      }`}>
+                        Ready!
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between text-[11px] font-semibold text-purple-300">
+                      <span className="flex items-center gap-1.5 truncate max-w-[280px]">
+                        {pipelineStage === 'ready' ? (
+                          <CheckCircle className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                        ) : (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-400 shrink-0" />
+                        )}
+                        <span className="truncate">{pipelineStatus}</span>
+                      </span>
+                      <span className="font-mono text-purple-300 font-bold ml-2 shrink-0">{pipelinePercent}%</span>
+                    </div>
+                    <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden border border-purple-500/20">
+                      <div
+                        className={`h-full rounded-full transition-all duration-200 ${
+                          pipelineStage === 'ready'
+                            ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
+                            : 'bg-gradient-to-r from-purple-500 via-indigo-500 to-cyan-400'
+                        }`}
+                        style={{ width: `${pipelinePercent}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })()}
+
               <div className="flex gap-2 pt-2">
                 <button
                   type="button"
+                  disabled={isSaving}
                   onClick={() => setShowModal(false)}
-                  className="flex-1 py-2.5 rounded-xl border font-semibold"
+                  className="flex-1 py-2.5 rounded-xl border font-semibold disabled:opacity-50"
                   style={{
                     backgroundColor: 'var(--bg-card-inner)',
                     borderColor: 'var(--border-inner)',
@@ -223,9 +366,17 @@ export const ProfilesPage: FC<ProfilesPageProps> = ({ profiles, onRefresh, onSel
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-semibold transition-colors"
+                  disabled={isSaving}
+                  className="flex-1 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-semibold transition-colors disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
                 >
-                  Save Profile
+                  {isSaving ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Saving...</span>
+                    </>
+                  ) : (
+                    <span>Save Profile</span>
+                  )}
                 </button>
               </div>
             </form>

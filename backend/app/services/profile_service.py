@@ -20,10 +20,14 @@ class ProfileService:
         reference_transcript: Optional[str] = None,
         description: Optional[str] = None
     ) -> VoiceProfile:
-        # Check name uniqueness
+        # Check name uniqueness and auto-deduplicate if name already exists
         existing = db.query(VoiceProfile).filter(VoiceProfile.name == name).first()
         if existing:
-            raise HTTPException(status_code=400, detail=f"Voice profile with name '{name}' already exists.")
+            base_name = name
+            counter = 1
+            while db.query(VoiceProfile).filter(VoiceProfile.name == f"{base_name} ({counter})").first():
+                counter += 1
+            name = f"{base_name} ({counter})"
 
         # Save audio file to temp/raw path
         raw_filename = f"raw_{uuid.uuid4().hex[:12]}_{audio_file.filename}"
@@ -59,19 +63,34 @@ class ProfileService:
         if not final_transcript and reference_transcript:
             final_transcript = reference_transcript.strip()
 
+        original_filename = audio_file.filename or clean_filename
+        detected_ext = Path(original_filename).suffix.lstrip(".").lower() or "wav"
+
         profile = VoiceProfile(
             name=name,
             description=description,
             reference_audio_path=str(clean_path),
-            reference_audio_name=clean_filename,
+            reference_audio_name=original_filename,
             reference_transcript=final_transcript,
             duration_seconds=processed_info["duration_seconds"],
             sample_rate=processed_info["sample_rate"],
             channels=processed_info["channels"],
-            audio_format="wav"
+            audio_format=detected_ext
         )
         db.add(profile)
-        db.commit()
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            # If a collision occurred (e.g. during long Whisper processing), auto-deduplicate and retry
+            base_name = name.split(" (")[0].strip()
+            counter = 1
+            while db.query(VoiceProfile).filter(VoiceProfile.name == f"{base_name} ({counter})").first():
+                counter += 1
+            profile.name = f"{base_name} ({counter})"
+            db.add(profile)
+            db.commit()
+
         db.refresh(profile)
         return profile
 

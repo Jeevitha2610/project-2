@@ -24,12 +24,18 @@ class SynthesisService:
             ref_transcript = profile.reference_transcript
             profile_name = profile.name
         elif request.reference_audio_name:
-            from backend.app.core.config import REFERENCES_DIR
-            potential_file = REFERENCES_DIR / request.reference_audio_name
-            if potential_file.exists():
-                ref_path = str(potential_file)
-                ref_transcript = request.reference_transcript or "Reference sentence"
-                profile_name = request.profile_name or "Custom Voice"
+            matching_profile = db.query(VoiceProfile).filter(VoiceProfile.reference_audio_name == request.reference_audio_name).first()
+            if matching_profile:
+                ref_path = matching_profile.reference_audio_path
+                ref_transcript = matching_profile.reference_transcript
+                profile_name = matching_profile.name
+            else:
+                from backend.app.core.config import REFERENCES_DIR
+                potential_file = REFERENCES_DIR / request.reference_audio_name
+                if potential_file.exists():
+                    ref_path = str(potential_file)
+                    ref_transcript = request.reference_transcript or "Reference sentence"
+                    profile_name = request.profile_name or "Custom Voice"
 
         # Fallback to first profile if none given
         if not ref_path:
