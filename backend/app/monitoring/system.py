@@ -16,6 +16,12 @@ _cached_gpu_info: Dict[str, Any] = {
 
 class SystemMonitor:
     @staticmethod
+    def invalidate_gpu_cache() -> None:
+        """Forces the next get_metrics call to immediately re-poll the remote GPU."""
+        global _last_gpu_check
+        _last_gpu_check = 0.0
+
+    @staticmethod
     def get_metrics() -> Dict[str, Any]:
         """Returns current CPU, RAM, Disk, and Colab GPU metrics."""
         global _last_gpu_check, _cached_gpu_info

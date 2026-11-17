@@ -27,6 +27,7 @@ def create_profile(
     return profile
 
 @router.get("/progress")
+@router.get("/processing-progress")
 def get_upload_processing_progress():
     from backend.app.audio.processor import get_processing_state
     return get_processing_state()

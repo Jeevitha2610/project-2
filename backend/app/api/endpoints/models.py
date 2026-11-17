@@ -49,9 +49,34 @@ class RemoteGpuRequest(BaseModel):
 
 @router.post("/remote-gpu")
 def set_remote_gpu(req: RemoteGpuRequest):
-    cleaned = req.url.strip()
+    cleaned = req.url.strip() if req.url else None
     settings.REMOTE_GPU_URL = cleaned if cleaned else None
-    return {"message": "Remote GPU URL updated", "remote_gpu_url": settings.REMOTE_GPU_URL}
+    
+    # Invalidate cached metrics so UI updates immediately
+    from backend.app.monitoring.system import SystemMonitor
+    SystemMonitor.invalidate_gpu_cache()
+
+    connection_status = {"connected": False, "gpu_name": None, "vram_total_gb": None}
+    if cleaned:
+        try:
+            import requests
+            res = requests.get(f"{cleaned.rstrip('/')}/health", timeout=3)
+            if res.status_code == 200:
+                data = res.json()
+                connection_status = {
+                    "connected": True,
+                    "gpu_name": data.get("gpu_name", "NVIDIA GPU"),
+                    "vram_total_gb": data.get("vram_total_gb", 24.0 if "L4" in data.get("gpu_name", "") else 15.0),
+                    "device": data.get("device", "cuda")
+                }
+        except Exception as e:
+            connection_status = {"connected": False, "error": str(e)}
+
+    return {
+        "message": "Remote GPU URL updated",
+        "remote_gpu_url": settings.REMOTE_GPU_URL,
+        "connection": connection_status
+    }
 
 @router.get("/remote-gpu")
 def get_remote_gpu():

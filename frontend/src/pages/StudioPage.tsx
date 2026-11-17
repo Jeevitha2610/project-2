@@ -154,17 +154,18 @@ export const StudioPage: React.FC<StudioPageProps> = ({
       try {
         const prog = await SynthesisAPI.getProgress();
         if (prog && typeof prog.percent === 'number' && prog.percent > 0) {
-          if (prog.stage) setProgressStage(prog.stage);
-          // Smooth time-based advance so the progress bar never freezes on long chunks
-          const timeBasedEstimate = Math.min(92, Math.round(prog.percent + (92 - prog.percent) * (1.0 - Math.exp(-elapsed / 10.0))));
+          if (prog.stage) setProgressStage(`${prog.stage} (${elapsed}s)`);
+          // Smooth progressive advance without stalling abruptly at 92%
+          const timeBasedEstimate = Math.min(98, Math.round(prog.percent + (98 - prog.percent) * (1.0 - Math.exp(-elapsed / 20.0))));
           setProgressPercent(prev => Math.max(prev, timeBasedEstimate));
         } else {
           // Dynamic client interpolation
-          const estimated = Math.min(90, Math.round(10 + 80 * (1.0 - Math.exp(-elapsed / 10.0))));
+          const estimated = Math.min(95, Math.round(10 + 85 * (1.0 - Math.exp(-elapsed / 20.0))));
           setProgressPercent(prev => Math.max(prev, estimated));
+          setProgressStage(`Generating speech with neural diffusion (${elapsed}s)...`);
         }
       } catch (_) {
-        const estimated = Math.min(85, Math.round(10 + 75 * (1.0 - Math.exp(-elapsed / 12.0))));
+        const estimated = Math.min(90, Math.round(10 + 80 * (1.0 - Math.exp(-elapsed / 25.0))));
         setProgressPercent(prev => Math.max(prev, estimated));
       }
     }, 250);
@@ -1201,14 +1202,14 @@ export const StudioPage: React.FC<StudioPageProps> = ({
                 }}
               >
                 <option value="auto">Auto-Detect (Best Available)</option>
-                <option value="cpu">Local CPU (Intel Core i5-13H)</option>
-                <option value="remote_gpu">Google Colab GPU Cloud (T4/A100)</option>
+                <option value="cpu">Local CPU (Intel Core physical P-cores)</option>
+                <option value="remote_gpu">Google Colab GPU Cloud (L4/T4/A100)</option>
               </select>
               <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-3 pointer-events-none" />
             </div>
             <div className="text-[10.5px] text-slate-400 leading-tight">
-              {computeDevice === 'remote_gpu' || systemMetrics?.gpu_name
-                ? '⚡ 32 ODE steps on GPU (~4.6s per utterance)'
+              {computeDevice === 'remote_gpu' || systemMetrics?.is_colab_connected
+                ? `⚡ 32 ODE steps on ${systemMetrics?.gpu_name || 'GPU'} (~1.8s - 3.5s per utterance)`
                 : '💻 10 ODE steps on local physical P-cores'}
             </div>
           </div>

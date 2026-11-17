@@ -111,6 +111,26 @@ export const ModelsAPI = {
   },
 };
 
+export const RemoteGpuAPI = {
+  getRemoteGpuUrl: async (): Promise<{ remote_gpu_url: string | null }> => {
+    const res = await api.get('/models/remote-gpu');
+    return res.data;
+  },
+  setRemoteGpuUrl: async (url: string): Promise<{
+    message: string;
+    remote_gpu_url: string | null;
+    connection?: {
+      connected: boolean;
+      gpu_name?: string | null;
+      vram_total_gb?: number | null;
+      error?: string;
+    };
+  }> => {
+    const res = await api.post('/models/remote-gpu', { url });
+    return res.data;
+  },
+};
+
 export const AudioAPI = {
   uploadAudio: async (
     file: File,

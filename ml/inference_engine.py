@@ -147,7 +147,7 @@ class VoiceCloningEngine:
             if threads_env and threads_env.isdigit():
                 num_threads = int(threads_env)
             else:
-                num_threads = min(4, psutil.cpu_count(logical=False) or 4)
+                num_threads = min(8, psutil.cpu_count(logical=False) or 8)
             torch.set_num_threads(num_threads)
 
             tts = F5TTS(model=self.model_id, device="cpu")
@@ -335,8 +335,9 @@ class VoiceCloningEngine:
                     best_rec = p_rec
                     retries = 0
 
-                    # Completeness gate: if WER > threshold, retry up to 4 tries
-                    while best_wer > wer_threshold and retries < 3:
+                    # Completeness gate: single pass in draft mode, max 1 retry in final mode
+                    max_allowed_retries = 1 if mode == "final" else 0
+                    while best_wer > wer_threshold and retries < max_allowed_retries:
                         retries += 1
                         retry_seed = (pending_seed or base_seed) + retries * 7919
                         retry_wav, _ = self._infer_chunk(
