@@ -25,6 +25,6 @@ class Settings(BaseModel):
     MAX_UPLOAD_SIZE_BYTES: int = 50 * 1024 * 1024  # 50MB
     ALLOWED_AUDIO_EXTENSIONS: list[str] = [".wav", ".mp3", ".flac", ".ogg", ".m4a"]
     DEFAULT_SAMPLE_RATE: int = 24000
-    REMOTE_GPU_URL: str | None = os.environ.get("VOICESTUDIO_REMOTE_GPU_URL", None)
+    REMOTE_GPU_URL: str | None = os.environ.get("VOICESTUDIO_REMOTE_GPU_URL", "https://earlier-beast-marina-blank.trycloudflare.com")
 
 settings = Settings()
